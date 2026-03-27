@@ -1,0 +1,6 @@
+views:
+  - title: Engineered Lighting
+    path: engineered-lighting
+    type: panel
+    cards:
+      - type: custom:engineered-lighting-card
