@@ -1,0 +1,94 @@
+    # ── Jetson Orin Nano Metrics ──
+    - name: "Jetson CPU Usage"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.cpu_usage }}"
+      json_attributes_topic: "engineered_lighting/jetson/metrics"
+      json_attributes_template: "{{ value_json | tojson }}"
+      unit_of_measurement: "%"
+      icon: mdi:chip
+    - name: "Jetson GPU Usage"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.gpu_usage }}"
+      unit_of_measurement: "%"
+      icon: mdi:expansion-card
+    - name: "Jetson RAM Usage"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.ram_pct }}"
+      unit_of_measurement: "%"
+      icon: mdi:memory
+    - name: "Jetson CPU Temp"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.cpu_temp }}"
+      unit_of_measurement: "°C"
+      icon: mdi:thermometer
+    - name: "Jetson GPU Temp"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.gpu_temp }}"
+      unit_of_measurement: "°C"
+      icon: mdi:thermometer-alert
+    - name: "Jetson Disk Usage"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.disk_pct }}"
+      unit_of_measurement: "%"
+      icon: mdi:harddisk
+    - name: "Jetson Status"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.status }}"
+      icon: mdi:developer-board
+    - name: "Jetson RAM Used"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.ram_used_mb }}"
+      unit_of_measurement: "MB"
+      icon: mdi:memory
+    - name: "Jetson RAM Total"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.ram_total_mb }}"
+      unit_of_measurement: "MB"
+      icon: mdi:memory
+    - name: "Jetson Uptime"
+      state_topic: "engineered_lighting/jetson/metrics"
+      value_template: "{{ value_json.uptime }}"
+      unit_of_measurement: "s"
+      icon: mdi:clock-outline
+    # ── LattePanda Sigma Metrics ──
+    - name: "LattePanda CPU Usage"
+      state_topic: "engineered_lighting/lattepanda/metrics"
+      value_template: "{{ value_json.cpu_usage }}"
+      json_attributes_topic: "engineered_lighting/lattepanda/metrics"
+      json_attributes_template: "{{ value_json | tojson }}"
+      unit_of_measurement: "%"
+      icon: mdi:chip
+    - name: "LattePanda RAM Usage"
+      state_topic: "engineered_lighting/lattepanda/metrics"
+      value_template: "{{ value_json.ram_pct }}"
+      unit_of_measurement: "%"
+      icon: mdi:memory
+    - name: "LattePanda CPU Temp"
+      state_topic: "engineered_lighting/lattepanda/metrics"
+      value_template: "{{ value_json.cpu_temp }}"
+      unit_of_measurement: "°C"
+      icon: mdi:thermometer
+    - name: "LattePanda Disk Usage"
+      state_topic: "engineered_lighting/lattepanda/metrics"
+      value_template: "{{ value_json.disk_pct }}"
+      unit_of_measurement: "%"
+      icon: mdi:harddisk
+    - name: "LattePanda Status"
+      state_topic: "engineered_lighting/lattepanda/metrics"
+      value_template: "{{ value_json.status }}"
+      icon: mdi:desktop-tower
+    - name: "LattePanda RAM Used"
+      state_topic: "engineered_lighting/lattepanda/metrics"
+      value_template: "{{ value_json.ram_used_mb }}"
+      unit_of_measurement: "MB"
+      icon: mdi:memory
+    - name: "LattePanda RAM Total"
+      state_topic: "engineered_lighting/lattepanda/metrics"
+      value_template: "{{ value_json.ram_total_mb }}"
+      unit_of_measurement: "MB"
+      icon: mdi:memory
+    - name: "LattePanda Uptime"
+      state_topic: "engineered_lighting/lattepanda/metrics"
+      value_template: "{{ value_json.uptime }}"
+      unit_of_measurement: "s"
+      icon: mdi:clock-outline
