@@ -1,10 +1,12 @@
 /**
- * Engineered Lighting Card v7
+ * Engineered Lighting Card v7b
  * V-JEPA 2 World Model Dashboard
  *
  * Design: Liquid glass · Monochrome · Zero flicker
- * Double-buffered snapshots. Bounding boxes enabled.
- * Large primary feeds → Metrics cards → Secondary feeds below fold.
+ * Single-img pre-load pattern (no double buffer).
+ * Detection pills persist across inference cycles (8s grace).
+ * Frigate stats fetched via Supervisor ingress.
+ * Fixed bottom glass metrics pane.
  */
 class EngineeredLightingCard extends HTMLElement {
   constructor() {
@@ -15,11 +17,14 @@ class EngineeredLightingCard extends HTMLElement {
     this._timers = [];
     this._frigateStats = {};
     this._failedCams = new Set();
-    // Flicker prevention caches
-    this._prevDetect = {};
-    this._prevScores = {};
-    this._prevStatus = {};
-    this._imgSlot = {}; // tracks which img buffer is active: 0 or 1
+    // Detection pill persistence: { camName: { objectName: lastSeenTimestamp } }
+    this._detectionCache = {};
+    this._soundCache = {};
+    this._prevDetectKey = {};
+    this._prevScoresKey = {};
+    // Frigate ingress URL (discovered dynamically)
+    this._ingressEntry = null;
+    this._ingressSlug = 'ccab4aaf_frigate-fa';
   }
 
   set hass(hass) {
@@ -33,28 +38,32 @@ class EngineeredLightingCard extends HTMLElement {
   setConfig(c) {
     this._config = {
       cameras: c.cameras || [
-        { name: 'living_room', entity: 'camera.living_room', label: 'Living Room', primary: true },
-        { name: 'dining_room', entity: 'camera.dining_room', label: 'Dining Room', primary: true },
-        { name: 'kitchen', entity: 'camera.kitchen', label: 'Kitchen', primary: false },
-        { name: 'back_door', entity: 'camera.back_door', label: 'Back Door', primary: false },
-        { name: 'driveway', entity: 'camera.driveway', label: 'Driveway', primary: false },
+        // Primary: Living Room (driveway entity) + Dining Room — large at top
+        { name: 'driveway',   entity: 'camera.driveway',   label: 'Living Room',  primary: true },
+        { name: 'dining_room',entity: 'camera.dining_room', label: 'Dining Room', primary: true },
+        // Secondary: below the fold
+        { name: 'kitchen',    entity: 'camera.kitchen',     label: 'Kitchen',     primary: false },
+        { name: 'living_room',entity: 'camera.living_room', label: 'Driveway',    primary: false },
+        { name: 'back_door',  entity: 'camera.back_door',   label: 'Back Door',   primary: false },
       ],
       frigate_url: c.frigate_url || 'http://192.168.175.114:5000',
+      frigate_addon_slug: c.frigate_addon_slug || 'ccab4aaf_frigate-fa',
+      detection_persist_ms: c.detection_persist_ms || 8000,
       ...c,
     };
+    this._ingressSlug = this._config.frigate_addon_slug;
   }
 
   static getConfigElement() { return document.createElement('div'); }
   static getStubConfig() {
     return { cameras: [
-      { name: 'living_room', entity: 'camera.living_room', label: 'Living Room', primary: true },
-      { name: 'dining_room', entity: 'camera.dining_room', label: 'Dining Room', primary: true },
-      { name: 'kitchen', entity: 'camera.kitchen', label: 'Kitchen', primary: false },
-      { name: 'back_door', entity: 'camera.back_door', label: 'Back Door', primary: false },
-      { name: 'driveway', entity: 'camera.driveway', label: 'Driveway', primary: false },
+      { name: 'driveway',    entity: 'camera.driveway',    label: 'Living Room',  primary: true },
+      { name: 'dining_room', entity: 'camera.dining_room', label: 'Dining Room',  primary: true },
+      { name: 'kitchen',     entity: 'camera.kitchen',     label: 'Kitchen',      primary: false },
+      { name: 'living_room', entity: 'camera.living_room', label: 'Driveway',     primary: false },
+      { name: 'back_door',   entity: 'camera.back_door',   label: 'Back Door',    primary: false },
     ]};
   }
-
   getCardSize() { return 28; }
 
   disconnectedCallback() {
@@ -62,9 +71,9 @@ class EngineeredLightingCard extends HTMLElement {
     this._timers = [];
   }
 
-  /* ────────────────────────────────────────
+  /* ═══════════════════════════════════════════
    * Snapshot URLs — bounding boxes enabled
-   * ──────────────────────────────────────── */
+   * ═══════════════════════════════════════════ */
   _snapUrl(cam) {
     if (this._failedCams.has(cam.name)) return this._snapUrlHA(cam);
     return `${this._config.frigate_url}/api/${cam.name}/latest.jpg?bbox=1&h=720&ts=${Date.now()}`;
@@ -76,25 +85,47 @@ class EngineeredLightingCard extends HTMLElement {
     return `/api/camera_proxy/${cam.entity}?token=${s.attributes.access_token}&ts=${Date.now()}`;
   }
 
-  /* ────────────────────────────────────────
-   * Data helpers
-   * ──────────────────────────────────────── */
+  /* ═══════════════════════════════════════════
+   * Detection helpers — with persistence cache
+   * ═══════════════════════════════════════════ */
   _getDetectedObjects(camName) {
     const objects = ['person','dog','cat','bottle','cup','bowl','chair','couch','dining_table','cell_phone','laptop','tv','book','remote','potted_plant','oven','backpack','handbag','suitcase','clock','car','truck','bicycle','motorcycle'];
-    return objects.filter(obj => {
-      let s = this._hass?.states[`binary_sensor.${camName}_${obj}_occupancy`];
-      if (s && s.state === 'on') return true;
-      s = this._hass?.states[`binary_sensor.whole_${camName}_${obj}_occupancy`];
-      return s && s.state === 'on';
+    const now = Date.now();
+    if (!this._detectionCache[camName]) this._detectionCache[camName] = {};
+    const cache = this._detectionCache[camName];
+
+    // Update cache: mark currently-on detections
+    objects.forEach(obj => {
+      let on = false;
+      const s1 = this._hass?.states[`binary_sensor.${camName}_${obj}_occupancy`];
+      if (s1 && s1.state === 'on') on = true;
+      if (!on) {
+        const s2 = this._hass?.states[`binary_sensor.whole_${camName}_${obj}_occupancy`];
+        if (s2 && s2.state === 'on') on = true;
+      }
+      if (on) cache[obj] = now;
     });
+
+    // Return objects seen within persistence window
+    const persist = this._config.detection_persist_ms;
+    return objects.filter(obj => cache[obj] && (now - cache[obj]) < persist);
   }
+
   _getDetectedSounds(camName) {
     const sounds = ['speech','music','bark','baby_crying','alarm','doorbell','fire_alarm','glass_breaking','knock','yelling'];
-    return sounds.filter(snd => {
+    const now = Date.now();
+    if (!this._soundCache[camName]) this._soundCache[camName] = {};
+    const cache = this._soundCache[camName];
+
+    sounds.forEach(snd => {
       const s = this._hass?.states[`binary_sensor.${camName}_${snd}_sound`];
-      return s && s.state === 'on';
+      if (s && s.state === 'on') cache[snd] = now;
     });
+
+    const persist = this._config.detection_persist_ms;
+    return sounds.filter(snd => cache[snd] && (now - cache[snd]) < persist);
   }
+
   _getObjectLabel(obj) {
     const m = { person:'Person',dog:'Dog',cat:'Cat',bottle:'Bottle',cup:'Cup',bowl:'Bowl',chair:'Chair',couch:'Couch',dining_table:'Table',cell_phone:'Phone',laptop:'Laptop',tv:'TV',book:'Book',remote:'Remote',potted_plant:'Plant',oven:'Oven',backpack:'Backpack',handbag:'Bag',suitcase:'Suitcase',clock:'Clock',car:'Car',truck:'Truck',bicycle:'Bike',motorcycle:'Moto' };
     return m[obj] || obj.replace(/_/g, ' ');
@@ -103,16 +134,15 @@ class EngineeredLightingCard extends HTMLElement {
   _isMotionDetected(camName) { const s = this._hass?.states[`binary_sensor.${camName}_motion`]; return s && s.state === 'on'; }
   _getSwitch(camName, type) { const s = this._hass?.states[`switch.${camName}_${type}`]; return s ? s.state === 'on' : false; }
 
-  /* ────────────────────────────────────────
+  /* ═══════════════════════════════════════════
    * V-JEPA 2 Activity
-   * ──────────────────────────────────────── */
+   * ═══════════════════════════════════════════ */
   _getActivity(camName) {
     const s = this._hass?.states[`sensor.${camName}_activity`];
     if (!s || s.state === 'unknown' || s.state === 'unavailable') return null;
     const a = s.attributes || {};
     const actObj = (typeof a.activity === 'object' && a.activity !== null) ? a.activity : null;
     return {
-      state: s.state,
       activity: actObj ? actObj.activity : (a.activity || s.state),
       confidence: actObj ? actObj.activity_confidence : (a.activity_confidence || a.confidence || null),
       secondary: actObj ? actObj.secondary_activity : (a.secondary_activity || null),
@@ -138,65 +168,55 @@ class EngineeredLightingCard extends HTMLElement {
     if (!iso) return '';
     const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
     if (diff < 5) return 'now';
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 60) return `${diff}s`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+    return `${Math.floor(diff / 3600)}h`;
   }
   _tempClass(t) { return t > 80 ? 'temp-hot' : t > 60 ? 'temp-warm' : ''; }
 
-  /* ────────────────────────────────────────
-   * Render (one-time DOM build)
-   * ──────────────────────────────────────── */
+  /* ═══════════════════════════════════════════
+   * Render (one-time DOM setup)
+   * ═══════════════════════════════════════════ */
   _render() {
     const cams = this._config.cameras;
-    const labelOverrides = { 'living_room': 'Driveway', 'driveway': 'Living Room' };
-    const primary = cams.filter(c => c.primary !== false && (c.name === 'living_room' || c.name === 'dining_room'));
-    const secondary = cams.filter(c => !primary.includes(c));
+    const primary = cams.filter(c => c.primary);
+    const secondary = cams.filter(c => !c.primary);
 
-    const camHTML = (cam, cls) => {
-      const dl = labelOverrides[cam.name] || cam.label;
-      return `
+    const camHTML = (cam, cls) => `
       <div class="cam-cell ${cls}" id="cell-${cam.name}">
         <div class="cam-vp">
-          <!-- Double-buffered images: two layers, swap on load -->
-          <img class="cam-img cam-img-a" id="img-a-${cam.name}" alt="${dl}" />
-          <img class="cam-img cam-img-b" id="img-b-${cam.name}" alt="${dl}" style="opacity:0" />
+          <img class="cam-img" id="img-${cam.name}" alt="${cam.label}" />
 
-          <!-- Overlays: all absolutely positioned over the image -->
           <div class="ov-top">
-            <span class="ov-label">${dl}</span>
-            <span class="ov-pipeline" id="pipe-${cam.name}" title="V-JEPA 2 inference">
-              <span class="pipe-dot"></span>
-              <span class="pipe-text">V-JEPA</span>
-            </span>
+            <span class="ov-label">${cam.label}</span>
+            <span class="ov-pipe" id="pipe-${cam.name}"><span class="pipe-dot"></span><span class="pipe-txt">V-JEPA</span></span>
             <span class="ov-status" id="status-${cam.name}">Idle</span>
           </div>
 
           <div class="ov-detect" id="detect-${cam.name}"></div>
 
-          <!-- V-JEPA 2 activity context panel -->
+          <!-- V-JEPA 2 Activity Context: large labels -->
           <div class="ov-activity" id="act-${cam.name}">
             <div class="act-main">
               <span class="act-name" id="act-name-${cam.name}"></span>
               <span class="act-conf" id="act-conf-${cam.name}"></span>
-              <span class="act-ts" id="act-ts-${cam.name}"></span>
             </div>
             <div class="act-sec" id="act-sec-${cam.name}"></div>
             <div class="act-scores" id="act-scores-${cam.name}"></div>
           </div>
 
-          <!-- Bottom data bar: embed/motion/trend + Frigate fps -->
+          <!-- Bottom data strip -->
           <div class="ov-data" id="data-${cam.name}">
             <span class="od"><span class="od-l">Embed</span><span class="od-v" id="od-embed-${cam.name}">—</span></span>
             <span class="od"><span class="od-l">Motion</span><span class="od-v" id="od-motion-${cam.name}">—</span></span>
             <span class="od"><span class="od-l">Trend</span><span class="od-v" id="od-trend-${cam.name}">—</span></span>
-            <span class="od od-sep"></span>
+            <span class="od-sep"></span>
             <span class="od"><span class="od-l">FPS</span><span class="od-v" id="od-fps-${cam.name}">—</span></span>
             <span class="od"><span class="od-l">Det/s</span><span class="od-v" id="od-dps-${cam.name}">—</span></span>
+            <span class="od-ts" id="od-ts-${cam.name}"></span>
           </div>
         </div>
       </div>`;
-    };
 
     this.shadowRoot.innerHTML = `
       <style>${this._css()}</style>
@@ -215,14 +235,20 @@ class EngineeredLightingCard extends HTMLElement {
         </header>
 
         <div class="scroll-area">
-
-          <!-- Primary feeds: Living Room + Dining Room (large) -->
+          <!-- Primary: Living Room + Dining Room (large) -->
           <div class="grid-primary">
             ${primary.map(c => camHTML(c, 'cam-lg')).join('')}
           </div>
 
-          <!-- Metrics: glass cards, no dark background -->
-          <div class="metrics">
+          <!-- Secondary: Kitchen, Driveway, Back Door (below fold, below metrics) -->
+          <div class="grid-secondary">
+            ${secondary.map(c => camHTML(c, 'cam-sm')).join('')}
+          </div>
+        </div>
+
+        <!-- Fixed bottom metrics: glass cards, no dark bg -->
+        <div class="metrics-pane">
+          <div class="metrics-grid">
             <!-- Frigate NVR -->
             <div class="mc">
               <div class="mc-hdr"><span class="mc-t">Frigate NVR</span><span class="mc-badge" id="mc-fri-b">—</span></div>
@@ -262,119 +288,127 @@ class EngineeredLightingCard extends HTMLElement {
                 <div class="mc-r"><span class="mc-l">FPS</span><span class="mc-v" id="mc-vj-fps">—</span></div>
                 <div class="mc-r"><span class="mc-l">Latency</span><span class="mc-v" id="mc-vj-lat">—</span></div>
                 <div class="mc-r"><span class="mc-l">Frames</span><span class="mc-v" id="mc-vj-frm">—</span></div>
-                <div class="mc-r"><span class="mc-l">Active Cams</span><span class="mc-v" id="mc-vj-cam">—</span></div>
+                <div class="mc-r"><span class="mc-l">Active</span><span class="mc-v" id="mc-vj-cam">—</span></div>
                 <div class="mc-r"><span class="mc-l">Inferring</span><span class="mc-v" id="mc-vj-inf">—</span></div>
-                <div class="mc-r mc-r-model"><span class="mc-model" id="mc-vj-mdl">ViT-L · FP16 · CUDA</span></div>
+                <div class="mc-r mc-r-mdl"><span class="mc-mdl" id="mc-vj-mdl">ViT-L · FP16 · CUDA</span></div>
               </div>
             </div>
-          </div>
-
-          <!-- Secondary feeds: Kitchen, Back Door, Driveway (below fold) -->
-          <div class="grid-secondary">
-            ${secondary.map(c => camHTML(c, 'cam-sm')).join('')}
           </div>
         </div>
       </div>
     `;
-    // Initialize double-buffer state
-    this._config.cameras.forEach(cam => { this._imgSlot[cam.name] = 'a'; });
+    this._setupImgHandlers();
   }
 
-  /* ────────────────────────────────────────
-   * Polling: double-buffered snapshot swap
-   * ──────────────────────────────────────── */
-  _poll() {
-    const t1 = setInterval(() => this._refreshSnapshots(), 2000);
-    const t2 = setInterval(() => this._fetchFrigate(), 5000);
-    this._timers.push(t1, t2);
-    // Initial load — just set img-a src directly
+  _setupImgHandlers() {
     this._config.cameras.forEach(cam => {
-      const imgA = this.shadowRoot.getElementById(`img-a-${cam.name}`);
-      if (imgA) {
-        imgA.src = this._snapUrl(cam);
-        imgA.onerror = () => {
+      const img = this.shadowRoot.getElementById(`img-${cam.name}`);
+      if (img) {
+        img.onerror = () => {
           if (!this._failedCams.has(cam.name)) {
             this._failedCams.add(cam.name);
-            imgA.src = this._snapUrlHA(cam);
+            img.src = this._snapUrlHA(cam);
           }
         };
       }
     });
+  }
+
+  /* ═══════════════════════════════════════════
+   * Polling
+   * ═══════════════════════════════════════════ */
+  _poll() {
+    // Snapshot refresh every 2s — pre-load into temp Image, swap on load
+    const t1 = setInterval(() => {
+      this._config.cameras.forEach(cam => {
+        const img = this.shadowRoot.getElementById(`img-${cam.name}`);
+        if (!img) return;
+        const url = this._snapUrl(cam);
+        const tmp = new Image();
+        tmp.onload = () => { img.src = url; };
+        tmp.onerror = () => {
+          if (!this._failedCams.has(cam.name)) {
+            this._failedCams.add(cam.name);
+            img.src = this._snapUrlHA(cam);
+          }
+        };
+        tmp.src = url;
+      });
+    }, 2000);
+
+    // Frigate stats every 5s via ingress
+    const t2 = setInterval(() => this._fetchFrigate(), 5000);
+    this._timers.push(t1, t2);
+
+    // Initial snapshot load
+    this._config.cameras.forEach(cam => {
+      const img = this.shadowRoot.getElementById(`img-${cam.name}`);
+      if (img) img.src = this._snapUrl(cam);
+    });
     this._fetchFrigate();
   }
 
-  _refreshSnapshots() {
-    this._config.cameras.forEach(cam => {
-      const active = this._imgSlot[cam.name] || 'a';
-      const next = active === 'a' ? 'b' : 'a';
-      const activeImg = this.shadowRoot.getElementById(`img-${active}-${cam.name}`);
-      const nextImg = this.shadowRoot.getElementById(`img-${next}-${cam.name}`);
-      if (!activeImg || !nextImg) return;
-
-      const url = this._snapUrl(cam);
-      // Pre-load into the hidden buffer
-      nextImg.onload = () => {
-        // Swap: show next, hide active
-        nextImg.style.opacity = '1';
-        activeImg.style.opacity = '0';
-        this._imgSlot[cam.name] = next;
-      };
-      nextImg.onerror = () => {
-        if (!this._failedCams.has(cam.name)) {
-          this._failedCams.add(cam.name);
-          nextImg.src = this._snapUrlHA(cam);
-        }
-      };
-      nextImg.src = url;
-    });
-  }
-
   async _fetchFrigate() {
-    // Try ingress signed path first, then direct, then callApi
-    if (this._hass) {
-      // Method 1: signed ingress path
+    if (!this._hass) return;
+
+    // Discover ingress entry if not cached
+    if (!this._ingressEntry) {
       try {
-        const signed = await this._hass.callWS({ type: 'auth/sign_path', path: '/api/hassio/ingress/ccab4aaf_frigate-fa/api/stats' });
-        if (signed?.path) {
-          const r = await fetch(signed.path, { credentials: 'same-origin' });
-          if (r.ok) { this._frigateStats = await r.json(); return; }
-        }
-      } catch(e) {}
-      // Method 2: HA proxy with Bearer
+        const info = await this._hass.callWS({
+          type: 'supervisor/api',
+          endpoint: `/addons/${this._ingressSlug}/info`,
+          method: 'GET'
+        });
+        if (info?.ingress_entry) this._ingressEntry = info.ingress_entry;
+      } catch(e) { /* non-supervisor install, skip */ }
+    }
+
+    // Method 1: Fetch via ingress (same-origin, works in browser)
+    if (this._ingressEntry) {
       try {
-        const token = this._hass.auth?.data?.access_token;
-        if (token) {
-          const r = await fetch('/api/frigate/stats', { headers: { 'Authorization': 'Bearer ' + token } });
-          if (r.ok) { this._frigateStats = await r.json(); return; }
-        }
-      } catch(e) {}
-      // Method 3: callApi
-      try {
-        if (this._hass.callApi) {
-          const d = await this._hass.callApi('GET', 'frigate/stats');
-          if (d) { this._frigateStats = d; return; }
-        }
+        const r = await fetch(this._ingressEntry + '/api/stats', { credentials: 'same-origin' });
+        if (r.ok) { this._frigateStats = await r.json(); return; }
+        // If 401, invalidate cached entry so it's re-discovered
+        if (r.status === 401) this._ingressEntry = null;
       } catch(e) {}
     }
-    // Method 4: direct fetch (may fail CORS)
+
+    // Method 2: Supervisor add-on stats (container-level CPU/mem only)
+    try {
+      const st = await this._hass.callWS({
+        type: 'supervisor/api',
+        endpoint: `/addons/${this._ingressSlug}/stats`,
+        method: 'GET'
+      });
+      if (st) {
+        // Map supervisor stats into Frigate-like structure
+        if (!this._frigateStats.cpu_usages) this._frigateStats.cpu_usages = {};
+        this._frigateStats.cpu_usages['frigate.full_system'] = {
+          cpu: String(st.cpu_percent || 0),
+          mem: String(((st.memory_usage || 0) / (st.memory_limit || 1) * 100).toFixed(1)),
+        };
+        if (!this._frigateStats.service) this._frigateStats.service = {};
+        this._frigateStats.service._supervisor = true;
+      }
+    } catch(e) {}
+
+    // Method 3: Direct fetch (fails with CORS but worth trying)
     try {
       const r = await fetch(this._config.frigate_url + '/api/stats');
       if (r.ok) this._frigateStats = await r.json();
     } catch(e) {}
   }
 
-  /* ────────────────────────────────────────
-   * Update (diff-based, zero innerHTML except
-   * detection pills and activity scores on key change)
-   * ──────────────────────────────────────── */
+  /* ═══════════════════════════════════════════
+   * Update — diff-based, zero flicker
+   * ═══════════════════════════════════════════ */
   _update() {
     if (!this._hass) return;
     let totalObj = 0;
     this._config.cameras.forEach(cam => { totalObj += this._updateCam(cam); });
     this._updateMetrics();
 
-    const oe = this.shadowRoot.getElementById('hdr-obj');
-    if (oe) this._setText(oe, String(totalObj));
+    this._setText('hdr-obj', String(totalObj));
 
     // Status pill
     const vst = this._hass.states['sensor.v_jepa_2_status'];
@@ -389,8 +423,11 @@ class EngineeredLightingCard extends HTMLElement {
     }
   }
 
-  // Helper: only set textContent if changed (prevents reflow/flicker)
-  _setText(el, val) { if (el && el.textContent !== val) el.textContent = val; }
+  _setText(id, val) {
+    const el = typeof id === 'string' ? this.shadowRoot.getElementById(id) : id;
+    if (el && el.textContent !== val) el.textContent = val;
+  }
+  _setClass(el, cls) { if (el && el.className !== cls) el.className = cls; }
 
   _updateCam(cam) {
     const $ = id => this.shadowRoot.getElementById(id);
@@ -398,108 +435,86 @@ class EngineeredLightingCard extends HTMLElement {
     const fStats = this._frigateStats?.cameras?.[cam.name];
     const inferring = this._isVjepaInferring(cam.name);
 
-    // ── Pipeline indicator ──
+    // Pipeline indicator
     const pipe = $(`pipe-${cam.name}`);
-    if (pipe) {
-      const cls = inferring ? 'ov-pipeline pipe-on' : 'ov-pipeline';
-      if (pipe.className !== cls) pipe.className = cls;
-    }
+    if (pipe) this._setClass(pipe, inferring ? 'ov-pipe pipe-on' : 'ov-pipe');
 
-    // ── Status badge ──
+    // Status badge
     const stEl = $(`status-${cam.name}`);
     if (stEl) {
-      let txt, cls;
-      if (act && act.person_detected) { txt = 'Person'; cls = 'ov-status ov-s-person'; }
-      else if (this._isMotionDetected(cam.name)) { txt = 'Motion'; cls = 'ov-status ov-s-motion'; }
-      else { txt = 'Idle'; cls = 'ov-status'; }
-      this._setText(stEl, txt);
-      if (stEl.className !== cls) stEl.className = cls;
+      if (act && act.person_detected) { this._setText(stEl, 'Person'); this._setClass(stEl, 'ov-status ov-s-person'); }
+      else if (this._isMotionDetected(cam.name)) { this._setText(stEl, 'Motion'); this._setClass(stEl, 'ov-status ov-s-motion'); }
+      else { this._setText(stEl, 'Idle'); this._setClass(stEl, 'ov-status'); }
     }
 
-    // ── V-JEPA 2 Activity Context ──
+    // ── V-JEPA 2 Activity Context (LARGE labels) ──
     const actPanel = $(`act-${cam.name}`);
     const actName = $(`act-name-${cam.name}`);
     const actConf = $(`act-conf-${cam.name}`);
-    const actTs = $(`act-ts-${cam.name}`);
     const actSec = $(`act-sec-${cam.name}`);
     const actScores = $(`act-scores-${cam.name}`);
 
     if (act && act.person_detected) {
       if (actPanel && !actPanel.classList.contains('act-on')) actPanel.classList.add('act-on');
-
       const label = this._activityLabel(act.activity) || 'Detected';
-      if (actName) { this._setText(actName, label); actName.className = 'act-name act-name-on'; }
-
+      if (actName) { this._setText(actName, label); this._setClass(actName, 'act-name act-name-on'); }
       if (actConf) {
         const pct = typeof act.confidence === 'number' ? (act.confidence > 1 ? act.confidence : act.confidence * 100) : 0;
         this._setText(actConf, pct.toFixed(0) + '%');
       }
-
-      if (actTs) this._setText(actTs, this._formatTime(act.timestamp));
-
       if (actSec) {
         const sec = act.secondary ? this._activityLabel(act.secondary) : null;
-        const sv = sec ? `${sec} ${(act.secondaryConf * 100).toFixed(0)}%` : '';
-        this._setText(actSec, sv);
+        this._setText(actSec, sec ? `${sec} ${(act.secondaryConf * 100).toFixed(0)}%` : '');
       }
-
-      // Activity scores — only rebuild on change
+      // Activity score bars (diff-based)
       if (actScores && act.activityScores) {
         const key = JSON.stringify(act.activityScores);
-        if (this._prevScores[cam.name] !== key) {
-          this._prevScores[cam.name] = key;
+        if (this._prevScoresKey[cam.name] !== key) {
+          this._prevScoresKey[cam.name] = key;
           const sorted = Object.entries(act.activityScores).sort((a, b) => b[1] - a[1]).slice(0, 5);
           const mx = sorted[0]?.[1] || 1;
           let h = '';
           sorted.forEach(([n, s]) => {
             const pct = Math.min(100, (s / mx) * 100);
-            h += `<div class="sr"><span class="sr-n">${n.replace(/_/g, ' ')}</span><div class="sr-bar"><div class="sr-fill" style="width:${pct}%"></div></div><span class="sr-v">${(s * 100).toFixed(0)}%</span></div>`;
+            h += `<div class="sr"><span class="sr-n">${n.replace(/_/g,' ')}</span><div class="sr-bar"><div class="sr-fill" style="width:${pct}%"></div></div><span class="sr-v">${(s*100).toFixed(0)}%</span></div>`;
           });
           actScores.innerHTML = h;
         }
       } else if (actScores && actScores.innerHTML) { actScores.innerHTML = ''; }
-
     } else {
       if (actPanel && actPanel.classList.contains('act-on')) actPanel.classList.remove('act-on');
-      if (actName) { this._setText(actName, ''); actName.className = 'act-name'; }
+      if (actName) { this._setText(actName, ''); this._setClass(actName, 'act-name'); }
       if (actConf) this._setText(actConf, '');
-      if (actTs) this._setText(actTs, '');
       if (actSec) this._setText(actSec, '');
       if (actScores && actScores.innerHTML) actScores.innerHTML = '';
     }
 
-    // ── Bottom data bar on feed ──
-    const embedEl = $(`od-embed-${cam.name}`);
-    const motionEl = $(`od-motion-${cam.name}`);
-    const trendEl = $(`od-trend-${cam.name}`);
-    const fpsEl = $(`od-fps-${cam.name}`);
-    const dpsEl = $(`od-dps-${cam.name}`);
-
+    // ── Bottom data strip ──
     if (act) {
-      if (embedEl) this._setText(embedEl, act.embed_change !== null ? act.embed_change.toFixed(4) : '—');
-      if (motionEl) this._setText(motionEl, act.motion_level !== null ? act.motion_level.toFixed(4) : '—');
-      if (trendEl) {
-        const arrow = act.trend !== null ? (act.trend > 0.001 ? '↑' : act.trend < -0.001 ? '↓' : '→') : '';
-        this._setText(trendEl, act.trend !== null ? act.trend.toFixed(4) + arrow : '—');
+      this._setText($(`od-embed-${cam.name}`), act.embed_change !== null ? act.embed_change.toFixed(4) : '—');
+      this._setText($(`od-motion-${cam.name}`), act.motion_level !== null ? act.motion_level.toFixed(4) : '—');
+      const trendEl = $(`od-trend-${cam.name}`);
+      if (trendEl && act.trend !== null) {
+        const a = act.trend > 0.001 ? '↑' : act.trend < -0.001 ? '↓' : '→';
+        this._setText(trendEl, act.trend.toFixed(4) + a);
       }
+      this._setText($(`od-ts-${cam.name}`), this._formatTime(act.timestamp));
     }
     if (fStats) {
-      if (fpsEl) this._setText(fpsEl, (fStats.camera_fps || 0).toFixed(0));
-      if (dpsEl) this._setText(dpsEl, (fStats.detection_fps || 0).toFixed(1));
+      this._setText($(`od-fps-${cam.name}`), (fStats.camera_fps || 0).toFixed(0));
+      this._setText($(`od-dps-${cam.name}`), (fStats.detection_fps || 0).toFixed(1));
     }
-
-    // ── Data bar visibility ──
     const dataBar = $(`data-${cam.name}`);
     if (dataBar) dataBar.style.opacity = (act && act.person_detected) || inferring ? '1' : '0.4';
 
-    // ── Detection pills (key-based diff) ──
+    // ── Detection pills (persistent, key-based diff) ──
     const objects = this._getDetectedObjects(cam.name);
     const sounds = this._getDetectedSounds(cam.name);
     const dEl = $(`detect-${cam.name}`);
     if (dEl) {
       const key = objects.join(',') + '|' + sounds.join(',');
-      if (this._prevDetect[cam.name] !== key) {
-        this._prevDetect[cam.name] = key;
+      if (this._prevDetectKey[cam.name] !== key) {
+        this._prevDetectKey[cam.name] = key;
         let h = '';
         objects.forEach(o => { h += `<span class="dp">${this._getObjectLabel(o)}</span>`; });
         sounds.forEach(s => { h += `<span class="dp dp-snd">${this._getSoundLabel(s)}</span>`; });
@@ -515,22 +530,22 @@ class EngineeredLightingCard extends HTMLElement {
     if (!h) return;
     const $ = id => this.shadowRoot.getElementById(id);
     const bar = (id, pct) => { const b = $(id); if (b) b.style.width = Math.min(100, pct || 0) + '%'; };
-    const sv = (id, v) => { const e = $(id); if (e) this._setText(e, String(v)); };
+    const sv = (id, v) => this._setText(id, String(v));
 
-    // ── Frigate ──
+    // ── Frigate NVR ──
     const st = this._frigateStats;
-    if (st && st.service) {
-      const up = st.service.uptime || 0;
+    const hasFrigate = st && (st.service || st.cpu_usages);
+    if (st?.cpu_usages?.['frigate.full_system']) {
+      const fs = st.cpu_usages['frigate.full_system'];
+      const cpu = parseFloat(fs.cpu) || 0;
+      const mem = parseFloat(fs.mem) || 0;
+      sv('mc-fri-cpu', cpu.toFixed(1) + '%'); bar('mc-fri-cpu-bar', cpu);
+      sv('mc-fri-mem', mem.toFixed(1) + '%'); bar('mc-fri-mem-bar', mem);
+    }
+    if (st?.service?.uptime) {
+      const up = st.service.uptime;
       const hrs = Math.floor(up / 3600); const min = Math.floor((up % 3600) / 60);
       sv('mc-fri-up', hrs > 0 ? `${hrs}h ${min}m` : `${min}m`);
-      const be = $('mc-fri-b'); if (be) { be.textContent = 'Online'; be.className = 'mc-badge badge-on'; }
-    }
-    if (st && st.cpu_usages) {
-      const fs = st.cpu_usages['frigate.full_system'];
-      if (fs) {
-        sv('mc-fri-cpu', (fs.cpu || 0) + '%'); bar('mc-fri-cpu-bar', fs.cpu);
-        sv('mc-fri-mem', (fs.mem || 0) + '%'); bar('mc-fri-mem-bar', fs.mem);
-      }
     }
     let dc = 0, mc = 0;
     this._config.cameras.forEach(cam => {
@@ -539,25 +554,32 @@ class EngineeredLightingCard extends HTMLElement {
     });
     sv('mc-fri-det', `${dc}/5 cams`);
     sv('mc-fri-mot', `${mc}/5 cams`);
+    const friBadge = $('mc-fri-b');
+    if (friBadge) {
+      if (hasFrigate) { friBadge.textContent = 'Online'; friBadge.className = 'mc-badge badge-on'; }
+      else { friBadge.textContent = 'Offline'; friBadge.className = 'mc-badge badge-off'; }
+    }
 
     // ── Coral TPU ──
-    if (st && st.detectors) {
+    if (st?.detectors) {
       const det = Object.values(st.detectors)[0];
       if (det) {
         sv('mc-coral-spd', (det.inference_speed || 0).toFixed(1) + ' ms');
         sv('mc-coral-pid', String(det.pid || '—'));
-        const be = $('mc-coral-b'); if (be) { be.textContent = 'Online'; be.className = 'mc-badge badge-on'; }
+        const cb = $('mc-coral-b'); if (cb) { cb.textContent = 'Online'; cb.className = 'mc-badge badge-on'; }
       }
     }
-    if (st && st.temperatures) {
-      const temp = st.temperatures.apex_0 || Object.values(st.temperatures)[0];
+    // Coral temp: check service.temperatures first, then top-level temperatures
+    const temps = st?.service?.temperatures || st?.temperatures;
+    if (temps) {
+      const temp = temps.apex_0 !== undefined ? temps.apex_0 : Object.values(temps)[0];
       if (temp !== undefined) {
         const te = $('mc-coral-tmp');
         if (te) { te.textContent = temp.toFixed(1) + '°C'; te.className = 'mc-v ' + this._tempClass(temp); }
       }
     }
 
-    // ── Jetson ──
+    // ── Jetson Orin Nano ──
     let jOn = false;
     [['sensor.jetson_cpu_usage','mc-jet-cpu','mc-jet-cpu-bar'],['sensor.jetson_gpu_usage','mc-jet-gpu','mc-jet-gpu-bar']].forEach(([sid,vid,bid]) => {
       const s = h.states[sid];
@@ -568,16 +590,15 @@ class EngineeredLightingCard extends HTMLElement {
     });
     const jr = h.states['sensor.jetson_ram_usage'];
     if (jr && jr.state !== 'unavailable' && jr.state !== 'unknown') {
-      jOn = true; const pct = parseFloat(jr.state) || 0;
-      const a = jr.attributes || {};
+      jOn = true; const a = jr.attributes || {};
       sv('mc-jet-ram', `${a.ram_used_mb ? (a.ram_used_mb/1024).toFixed(1) : '?'}/${a.ram_total_mb ? (a.ram_total_mb/1024).toFixed(1) : '?'} GB`);
-      bar('mc-jet-ram-bar', pct);
+      bar('mc-jet-ram-bar', parseFloat(jr.state) || 0);
     }
     [['sensor.jetson_cpu_temp','mc-jet-ct'],['sensor.jetson_gpu_temp','mc-jet-gt']].forEach(([sid,eid]) => {
       const s = h.states[sid];
       if (s && s.state !== 'unavailable' && s.state !== 'unknown') {
-        jOn = true;
-        const e = $(eid); if (e) { e.textContent = s.state + '°C'; e.className = 'mc-v ' + this._tempClass(parseFloat(s.state)); }
+        jOn = true; const e = $(eid);
+        if (e) { e.textContent = s.state + '°C'; e.className = 'mc-v ' + this._tempClass(parseFloat(s.state)); }
       } else { sv(eid, '—'); }
     });
     const jb = $('mc-jet-b');
@@ -600,21 +621,18 @@ class EngineeredLightingCard extends HTMLElement {
     let ic = 0;
     this._config.cameras.forEach(cam => { if (this._isVjepaInferring(cam.name)) ic++; });
     sv('mc-vj-inf', `${ic}/5 cams`);
-
     const vjb = $('mc-vj-b');
     if (vjb) { vjb.textContent = vjOn ? 'Online' : 'Offline'; vjb.className = vjOn ? 'mc-badge badge-on' : 'mc-badge badge-off'; }
-
     const vStatus = h.states['sensor.v_jepa_2_status'];
-    const mdl = $('mc-vj-mdl');
-    if (mdl && vStatus?.attributes) {
+    if (vStatus?.attributes) {
       const t = `${vStatus.attributes.model || 'ViT-L'} · ${vStatus.attributes.precision || 'FP16'} · CUDA`;
-      this._setText(mdl, t);
+      sv('mc-vj-mdl', t);
     }
   }
 
-  /* ────────────────────────────────────────
-   * CSS: Liquid glass · Monochrome · No color
-   * ──────────────────────────────────────── */
+  /* ═══════════════════════════════════════════
+   * CSS: Liquid glass · Monochrome
+   * ═══════════════════════════════════════════ */
   _css() {
     return `
     :host {
@@ -626,27 +644,24 @@ class EngineeredLightingCard extends HTMLElement {
       --t2: rgba(255,255,255,0.55);
       --t3: rgba(255,255,255,0.32);
       --t4: rgba(255,255,255,0.18);
-      --r: 14px;
-      --rs: 10px;
+      --r: 14px; --rs: 10px;
       --ease: cubic-bezier(.25,.1,.25,1);
-      --blur: blur(24px);
-      --blurs: blur(16px);
+      --blur: blur(24px); --blurs: blur(16px);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     .el-root {
       background: var(--bg);
       font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif;
-      color: var(--t1);
-      -webkit-font-smoothing: antialiased;
+      color: var(--t1); -webkit-font-smoothing: antialiased;
       height: 100vh; display: flex; flex-direction: column; overflow: hidden;
     }
 
     /* ── Header ── */
     .hdr {
       display: flex; justify-content: space-between; align-items: center;
-      padding: 10px 16px;
-      background: var(--g1); backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
+      padding: 10px 16px; background: var(--g1);
+      backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
       border-bottom: 1px solid var(--g2); flex-shrink: 0; z-index: 10;
     }
     .hdr-l { display: flex; flex-direction: column; gap: 1px; }
@@ -665,9 +680,10 @@ class EngineeredLightingCard extends HTMLElement {
     .pill-dot.off { background: var(--t4); animation: none; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-    /* ── Scroll Area ── */
+    /* ── Scroll Area (feeds scroll behind fixed bottom pane) ── */
     .scroll-area {
-      flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px 10px 20px;
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 8px 10px 220px; /* 220px bottom padding for fixed metrics pane */
       -webkit-overflow-scrolling: touch;
     }
     .scroll-area::-webkit-scrollbar { width: 3px; }
@@ -675,18 +691,14 @@ class EngineeredLightingCard extends HTMLElement {
     .scroll-area::-webkit-scrollbar-thumb { background: var(--g2); border-radius: 3px; }
 
     /* ── Camera Grids ── */
-    .grid-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
-    .grid-secondary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+    .grid-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+    .grid-secondary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 
     .cam-vp {
-      position: relative; background: var(--g1); border-radius: var(--r); overflow: hidden;
+      position: relative; background: #0a0a0a; border-radius: var(--r); overflow: hidden;
       aspect-ratio: 16/9; border: 1px solid var(--g2);
     }
-    .cam-img {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      object-fit: cover; display: block;
-      transition: opacity 0.3s var(--ease);
-    }
+    .cam-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
     /* ── Camera Overlays ── */
     .ov-top {
@@ -701,19 +713,19 @@ class EngineeredLightingCard extends HTMLElement {
     }
 
     /* V-JEPA pipeline indicator */
-    .ov-pipeline {
+    .ov-pipe {
       display: flex; align-items: center; gap: 3px;
       opacity: 0; transition: opacity 0.4s var(--ease);
     }
-    .ov-pipeline.pipe-on { opacity: 1; }
-    .pipe-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--t2); animation: pulse 1.5s ease-in-out infinite; }
-    .pipe-text { font-size: 8px; font-weight: 700; color: var(--t3); text-transform: uppercase; letter-spacing: 0.5px; }
+    .ov-pipe.pipe-on { opacity: 1; }
+    .pipe-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--t2); animation: pulse 1.2s ease-in-out infinite; }
+    .pipe-txt { font-size: 7px; font-weight: 700; color: var(--t3); text-transform: uppercase; letter-spacing: 0.5px; text-shadow: 0 1px 4px rgba(0,0,0,0.8); }
 
     .ov-status {
       margin-left: auto; font-size: 9px; font-weight: 600;
       padding: 2px 7px; border-radius: 100px;
-      background: rgba(255,255,255,0.06); backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
-      color: var(--t4);
+      background: rgba(255,255,255,0.06); color: var(--t4);
+      backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
     }
     .ov-s-person { background: rgba(255,255,255,0.14); color: var(--t1); }
     .ov-s-motion { background: rgba(255,255,255,0.08); color: var(--t2); }
@@ -724,40 +736,47 @@ class EngineeredLightingCard extends HTMLElement {
       display: flex; flex-wrap: wrap; gap: 3px; padding: 3px 8px;
     }
     .dp {
-      padding: 2px 6px; border-radius: 100px; font-size: 9px; font-weight: 600;
-      background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.12); color: var(--t2);
+      padding: 2px 7px; border-radius: 100px; font-size: 9px; font-weight: 600;
+      background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.14); color: var(--t2);
       backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
     }
     .dp-snd { font-style: italic; }
 
-    /* V-JEPA Activity panel on feed */
+    /* ── V-JEPA Activity on feed: LARGE labels ── */
     .ov-activity {
-      position: absolute; bottom: 22px; left: 0; right: 0;
-      padding: 6px 10px; z-index: 5;
-      opacity: 0.3; transition: opacity 0.4s var(--ease);
+      position: absolute; bottom: 24px; left: 0; right: 0;
+      padding: 8px 12px; z-index: 5;
+      opacity: 0.25; transition: opacity 0.4s var(--ease);
     }
     .ov-activity.act-on { opacity: 1; }
-    .act-main { display: flex; align-items: baseline; gap: 5px; }
-    .act-name { font-size: 12px; font-weight: 700; color: var(--t3); transition: color 0.3s var(--ease); text-shadow: 0 1px 6px rgba(0,0,0,1); }
+    .act-main { display: flex; align-items: baseline; gap: 8px; }
+    .act-name {
+      font-size: 18px; font-weight: 800; color: var(--t3);
+      letter-spacing: -0.02em;
+      text-shadow: 0 2px 10px rgba(0,0,0,1), 0 0 30px rgba(0,0,0,0.6);
+      transition: color 0.3s var(--ease);
+    }
     .act-name-on { color: var(--t1); }
-    .act-conf { font-size: 10px; font-weight: 700; color: var(--t2); font-variant-numeric: tabular-nums; text-shadow: 0 1px 4px rgba(0,0,0,0.8); }
-    .act-ts { font-size: 8px; color: var(--t4); margin-left: auto; font-variant-numeric: tabular-nums; text-shadow: 0 1px 4px rgba(0,0,0,0.8); }
-    .act-sec { font-size: 9px; color: var(--t3); min-height: 11px; text-shadow: 0 1px 4px rgba(0,0,0,0.8); }
-
-    /* Activity score bars */
-    .act-scores { display: flex; flex-direction: column; gap: 1px; padding: 2px 0; }
-    .sr { display: flex; align-items: center; gap: 3px; }
-    .sr-n { font-size: 7px; font-weight: 500; color: var(--t4); width: 38px; flex-shrink: 0; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+    .act-conf {
+      font-size: 14px; font-weight: 700; color: var(--t2); font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 6px rgba(0,0,0,0.9);
+    }
+    .act-sec {
+      font-size: 11px; color: var(--t3); font-weight: 500; min-height: 14px;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+    }
+    .act-scores { display: flex; flex-direction: column; gap: 1px; padding: 3px 0; }
+    .sr { display: flex; align-items: center; gap: 4px; }
+    .sr-n { font-size: 8px; font-weight: 500; color: var(--t4); width: 44px; flex-shrink: 0; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
     .sr-bar { flex: 1; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.06); overflow: hidden; }
     .sr-fill { height: 100%; border-radius: 1px; background: rgba(255,255,255,0.40); transition: width 0.4s var(--ease); }
-    .sr-v { font-size: 7px; font-weight: 600; color: var(--t3); font-variant-numeric: tabular-nums; width: 20px; text-align: right; flex-shrink: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+    .sr-v { font-size: 8px; font-weight: 600; color: var(--t3); font-variant-numeric: tabular-nums; width: 22px; text-align: right; flex-shrink: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
 
-    /* Bottom data bar on each feed */
+    /* Bottom data strip on each feed */
     .ov-data {
       position: absolute; bottom: 0; left: 0; right: 0; z-index: 5;
-      display: flex; align-items: center; gap: 8px;
-      padding: 4px 10px;
-      background: rgba(0,0,0,0.65);
+      display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+      background: rgba(0,0,0,0.55);
       backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
       transition: opacity 0.4s var(--ease);
     }
@@ -765,48 +784,56 @@ class EngineeredLightingCard extends HTMLElement {
     .od-l { font-size: 7px; font-weight: 600; color: var(--t4); text-transform: uppercase; letter-spacing: 0.3px; }
     .od-v { font-size: 8px; font-weight: 600; font-family: 'SF Mono','Menlo',monospace; color: var(--t3); font-variant-numeric: tabular-nums; }
     .od-sep { width: 1px; height: 10px; background: var(--g2); margin: 0 2px; }
+    .od-ts { font-size: 7px; color: var(--t4); margin-left: auto; font-variant-numeric: tabular-nums; }
 
-    /* ── Metrics Cards: glass only, no dark backdrop ── */
-    .metrics {
+    /* ── Fixed Bottom Metrics Pane: glass cards, NO dark bg ── */
+    .metrics-pane {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+      padding: 8px 10px 10px;
+      /* No background — glass cards stand alone */
+      border-top: 1px solid var(--g2);
+    }
+    .metrics-grid {
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
-      padding: 4px 0;
+      max-width: 1600px; margin: 0 auto;
     }
     .mc {
-      background: var(--g1); border: 1px solid var(--g2); border-radius: var(--r);
+      background: rgba(12,12,14,0.85); border: 1px solid var(--g2); border-radius: var(--r);
       padding: 14px 16px;
-      backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
       transition: border-color 0.3s var(--ease);
     }
     .mc:hover { border-color: var(--g3); }
     .mc-accent { border-color: rgba(255,255,255,0.12); }
 
     .mc-hdr { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
-    .mc-t { font-size: 11px; font-weight: 700; flex: 1; letter-spacing: -0.01em; color: var(--t2); }
+    .mc-t { font-size: 11px; font-weight: 700; flex: 1; color: var(--t2); }
     .mc-badge { font-size: 8px; font-weight: 700; padding: 2px 8px; border-radius: 100px; background: var(--g1); color: var(--t4); }
     .mc-badge.badge-on { background: rgba(255,255,255,0.08); color: var(--t1); }
     .mc-badge.badge-off { background: rgba(255,255,255,0.04); color: var(--t4); }
 
     .mc-body { display: flex; flex-direction: column; gap: 6px; }
     .mc-r { display: flex; align-items: center; gap: 8px; }
-    .mc-r-model { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--g2); }
+    .mc-r-mdl { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--g2); }
     .mc-l { font-size: 10px; color: var(--t4); width: 56px; flex-shrink: 0; font-weight: 500; }
     .mc-bar { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.04); overflow: hidden; }
     .mc-fill { height: 100%; border-radius: 2px; transition: width 0.6s var(--ease); width: 0%; background: rgba(255,255,255,0.35); }
     .mc-v { font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--t2); min-width: 56px; text-align: right; }
     .mc-v.temp-warm { color: var(--t1); }
     .mc-v.temp-hot { color: var(--t1); font-weight: 800; }
-    .mc-model { font-size: 9px; color: var(--t4); font-family: 'SF Mono','Menlo',monospace; letter-spacing: 0.2px; }
+    .mc-mdl { font-size: 9px; color: var(--t4); font-family: 'SF Mono','Menlo',monospace; letter-spacing: 0.2px; }
 
     /* ── Responsive ── */
     @media (max-width: 1000px) {
-      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
       .grid-secondary { grid-template-columns: repeat(2, 1fr); }
+      .scroll-area { padding-bottom: 360px; }
     }
     @media (max-width: 600px) {
       .grid-primary { grid-template-columns: 1fr; }
       .grid-secondary { grid-template-columns: 1fr; }
-      .metrics { grid-template-columns: 1fr; }
-      .scroll-area { padding: 6px; }
+      .metrics-grid { grid-template-columns: 1fr 1fr; }
+      .scroll-area { padding-bottom: 420px; }
     }
     `;
   }
@@ -819,5 +846,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'engineered-lighting-card',
   name: 'Engineered Lighting',
-  description: 'V-JEPA 2 World Model Dashboard v7'
+  description: 'V-JEPA 2 World Model Dashboard v7b'
 });
