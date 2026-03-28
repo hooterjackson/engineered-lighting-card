@@ -172,6 +172,7 @@ class EngineeredLightingCard extends HTMLElement {
           ${cam.vjepa ? `
           <div class="ov-activity" id="act-${cam.name}">
             <div class="act-content">
+              <div class="act-posture-line" id="act-posture-${cam.name}"></div>
               <div class="act-main">
                 <span class="act-name" id="act-name-${cam.name}"></span>
                 <span class="act-conf" id="act-conf-${cam.name}"></span>
@@ -405,22 +406,33 @@ class EngineeredLightingCard extends HTMLElement {
       const ac = $(`act-conf-${cam.name}`);
       const as2 = $(`act-sec-${cam.name}`);
       const asc = $(`act-scores-${cam.name}`);
+      const postureEl = $(`act-posture-${cam.name}`);
       if (personDetected) {
         if (ap && !ap.classList.contains('act-on')) ap.classList.add('act-on');
-        // Two-head display: "Posture · Activity"
+        // Head 1: Posture (top line, smaller)
         const postureLbl = act.posture ? this._activityLabel(act.posture) : null;
-        const activityLbl = this._activityLabel(act.activity) || 'Detected';
-        const combinedLbl = postureLbl && activityLbl && postureLbl !== activityLbl
-          ? `${postureLbl} · ${activityLbl}` : (activityLbl || postureLbl || 'Detected');
-        if (an) { this._st(an, combinedLbl); this._sc(an, 'act-name act-name-on'); }
+        const postPct = typeof act.postureConf === 'number' ? (act.postureConf > 1 ? act.postureConf : act.postureConf * 100) : null;
+        if (postureEl) {
+          this._st(postureEl, postureLbl ? `${postureLbl}${postPct !== null ? ' ' + postPct.toFixed(0) + '%' : ''}` : '');
+        }
+        // Head 2: Activity (main line, larger) — use secondary if primary is just "idle"
+        let activityLbl = this._activityLabel(act.activity);
+        const secLbl = act.secondary ? this._activityLabel(act.secondary) : null;
+        // If activity is "Idle" but we have a more descriptive secondary like "Watching Tv", promote it
+        if (activityLbl === 'Idle' && secLbl && secLbl !== 'Idle') {
+          activityLbl = secLbl;
+        }
+        if (!activityLbl || activityLbl === 'Idle') activityLbl = postureLbl || 'Present';
+        if (an) { this._st(an, activityLbl); this._sc(an, 'act-name act-name-on'); }
         if (ac) {
           const pct = typeof act.confidence === 'number' ? (act.confidence > 1 ? act.confidence : act.confidence * 100) : 0;
-          const postPct = typeof act.postureConf === 'number' ? (act.postureConf > 1 ? act.postureConf : act.postureConf * 100) : null;
-          this._st(ac, postPct !== null ? `P:${postPct.toFixed(0)}% A:${pct.toFixed(0)}%` : pct.toFixed(0) + '%');
+          this._st(ac, pct.toFixed(0) + '%');
         }
         if (as2) {
+          // Show secondary activity if it wasn't promoted
           const sec = act.secondary ? this._activityLabel(act.secondary) : null;
-          this._st(as2, sec ? `${sec} ${(act.secondaryConf * 100).toFixed(0)}%` : '');
+          const showSec = sec && sec !== activityLbl ? sec : null;
+          this._st(as2, showSec ? `${showSec} ${(act.secondaryConf * 100).toFixed(0)}%` : '');
         }
         if (asc && act.activityScores) {
           const key = JSON.stringify(act.activityScores);
@@ -437,6 +449,7 @@ class EngineeredLightingCard extends HTMLElement {
         } else if (asc && asc.innerHTML) { asc.innerHTML = ''; }
       } else {
         if (ap && ap.classList.contains('act-on')) ap.classList.remove('act-on');
+        if (postureEl) this._st(postureEl, '');
         if (an) { this._st(an, ''); this._sc(an, 'act-name'); }
         if (ac) this._st(ac, '');
         if (as2) this._st(as2, '');
@@ -689,6 +702,12 @@ class EngineeredLightingCard extends HTMLElement {
     }
     .ov-activity.act-on { opacity: 1; }
     .act-content { position: relative; z-index: 1; padding: 8px 14px; }
+    .act-posture-line {
+      font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.50);
+      letter-spacing: 0.02em; text-transform: uppercase;
+      text-shadow: 0 1px 6px rgba(0,0,0,1), 0 0 3px rgba(0,0,0,0.9);
+      margin-bottom: 2px; min-height: 14px;
+    }
     .act-main { display: flex; align-items: baseline; gap: 8px; }
     .act-name {
       font-size: 18px; font-weight: 500; color: var(--t4);
@@ -727,7 +746,7 @@ class EngineeredLightingCard extends HTMLElement {
     .metrics-pane {
       flex-shrink: 0; z-index: 20;
       padding: 10px 16px 12px;
-      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.9) 12%, #000 100%);
+      background: transparent;
     }
     .metrics-grid {
       display: grid;
