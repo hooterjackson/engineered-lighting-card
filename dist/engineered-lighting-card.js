@@ -1,5 +1,5 @@
 /**
- * Engineered Lighting Card v11
+ * Engineered Lighting Card v11.1
  * V-JEPA 2 World Model Dashboard
  *
  * Design: Apple-level refinement · Pipeline architecture · Ambient clarity
@@ -17,6 +17,11 @@
  *  - Refined detection pills: gentler, less border, more integrated
  *  - Activity overlay: cleaner score bars, better breathing room
  *  - Bottom pane: unified system vitals feel, not separate monitoring panels
+ *
+ * v11.1 changes:
+ *  - Apple TV playing indicator badge (top-right of living room feed)
+ *  - Shows ▶ Apple TV when playing, ❚❚ Paused when paused, hidden otherwise
+ *  - Reads apple_tv_state from V-JEPA activity sensor attributes
  */
 class EngineeredLightingCard extends HTMLElement {
   constructor() {
@@ -136,6 +141,7 @@ class EngineeredLightingCard extends HTMLElement {
       trend: a.trend !== undefined ? parseFloat(a.trend) : null,
       person_detected: !!a.person_detected,
       timestamp: a.timestamp || null,
+      apple_tv_state: a.apple_tv_state || null,
     };
   }
   _isVjepaInferring(cn) {
@@ -168,6 +174,7 @@ class EngineeredLightingCard extends HTMLElement {
             <span class="ov-label">${cam.label}</span>
             ${cam.vjepa ? `<span class="ov-pipe" id="pipe-${cam.name}"><span class="pipe-dot"></span>V-JEPA</span>` : ''}
           </div>
+          ${cam.name === 'driveway' ? `<div class="ov-atv" id="atv-badge"><span class="atv-icon">▶</span> Apple TV</div>` : ''}
           <div class="ov-detect" id="detect-${cam.name}"></div>
           ${cam.vjepa ? `
           <div class="ov-activity" id="act-${cam.name}">
@@ -393,6 +400,24 @@ class EngineeredLightingCard extends HTMLElement {
     // Pipeline indicator
     const pipe = $(`pipe-${cam.name}`);
     if (pipe) this._sc(pipe, inferring ? 'ov-pipe pipe-on' : 'ov-pipe');
+    // Apple TV badge (living room / driveway only)
+    if (cam.name === 'driveway') {
+      const atvBadge = $('atv-badge');
+      if (atvBadge) {
+        const atvState = act?.apple_tv_state;
+        const atvPlaying = atvState === 'playing';
+        const atvPaused = atvState === 'paused';
+        if (atvPlaying) {
+          atvBadge.className = 'ov-atv atv-playing';
+          atvBadge.innerHTML = '<span class="atv-icon">▶</span> Apple TV';
+        } else if (atvPaused) {
+          atvBadge.className = 'ov-atv atv-paused';
+          atvBadge.innerHTML = '<span class="atv-icon">❚❚</span> Paused';
+        } else {
+          atvBadge.className = 'ov-atv';
+        }
+      }
+    }
     // v11: Cell border glow when person detected
     const cell = $(`cell-${cam.name}`);
     if (cell) {
@@ -682,6 +707,30 @@ class EngineeredLightingCard extends HTMLElement {
     }
     .ov-pipe.pipe-on { opacity: 1; color: rgba(255,255,255,0.65); }
     .pipe-dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,0.6); animation: pulse 1.2s ease-in-out infinite; }
+    /* ── Apple TV badge: top-right of living room feed ── */
+    .ov-atv {
+      position: absolute; top: 8px; right: 10px; z-index: 6;
+      display: flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 100px;
+      font-size: 10px; font-weight: 500; letter-spacing: 0.01em;
+      background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.35);
+      backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
+      text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+      opacity: 0; transition: opacity 0.6s var(--ease), background 0.6s var(--ease), border-color 0.6s var(--ease);
+      pointer-events: none;
+    }
+    .ov-atv.atv-playing {
+      opacity: 1;
+      background: rgba(0,0,0,0.50);
+      border-color: rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.88);
+    }
+    .ov-atv.atv-paused {
+      opacity: 0.7;
+      color: rgba(255,255,255,0.50);
+    }
+    .atv-icon { font-size: 8px; }
     /* ── Detection pills v11: softer, more integrated ── */
     .ov-detect {
       position: absolute; top: 32px; left: 0; right: 0; z-index: 5; pointer-events: none;
@@ -883,5 +932,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'engineered-lighting-card',
   name: 'Engineered Lighting',
-  description: 'V-JEPA 2 World Model Dashboard v11'
+  description: 'V-JEPA 2 World Model Dashboard v11.1'
 });
