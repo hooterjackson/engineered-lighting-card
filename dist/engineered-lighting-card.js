@@ -602,6 +602,7 @@ class EngineeredLightingCard extends HTMLElement {
       font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', system-ui, sans-serif;
       color: var(--t1); -webkit-font-smoothing: antialiased;
       height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+      position: relative;
     }
     /* ── Header ── */
     .hdr {
@@ -742,12 +743,15 @@ class EngineeredLightingCard extends HTMLElement {
     .od-v { font-size: 10px; font-weight: 500; font-family: 'SF Mono','Menlo',monospace; color: rgba(255,255,255,0.58); font-variant-numeric: tabular-nums; }
     .od-sep { width: 1px; height: 8px; background: rgba(255,255,255,0.08); margin: 0 2px; }
     .od-ts { font-size: 8px; color: rgba(255,255,255,0.28); margin-left: auto; font-variant-numeric: tabular-nums; }
-    /* ── Metrics pane v11: flex child at bottom, never overlaps HA sidebar ── */
+    /* ── Metrics pane v11: overlays bottom of camera feeds ── */
     .metrics-pane {
-      flex-shrink: 0; z-index: 20;
+      position: absolute; bottom: 0; left: 0; right: 0;
+      z-index: 20;
       padding: 10px 16px 12px;
-      background: transparent;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 40%, rgba(0,0,0,0.6) 100%);
+      pointer-events: none;
     }
+    .metrics-pane > * { pointer-events: auto; }
     .metrics-grid {
       display: grid;
       grid-template-columns: 1fr auto 1fr;
