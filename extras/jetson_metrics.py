@@ -3,9 +3,12 @@
 Engineered Lighting — Jetson Orin Nano metrics publisher.
 Reads tegrastats + /sys thermal/power nodes and publishes to MQTT
 every 5 seconds as JSON on  engineered_lighting/jetson/metrics
+
+Also reads V-JEPA 2 inference metrics from a shared stats file
+written by the inference process (lightweight IPC via JSON file).
 """
 
-import json, os, re, subprocess, threading, time
+import json, os, re, subprocess, time
 import paho.mqtt.client as mqtt
 
 # ── Config ──────────────────────────────────────────────────────────
@@ -16,6 +19,21 @@ MQTT_PASS     = "frigatepass"
 TOPIC         = "engineered_lighting/jetson/metrics"
 INTERVAL      = 5          # seconds between publishes
 CLIENT_ID     = "jetson-metrics"
+
+# V-JEPA 2 inference stats file — written by the inference process
+# Expected JSON: {
+#   "inference_latency_ms": 142.3,   # per-frame inference time
+#   "fps": 7.02,                      # frames processed per second
+#   "frames_processed": 12345,         # total frames since start
+#   "model_loaded": true,              # model ready flag
+#   "last_update": 1711500000.0,       # unix timestamp
+#   "active_cameras": 5,               # cameras being processed
+#   "batch_size": 1,                   # current batch size
+#   "encoder_latency_ms": 98.1,        # encoder forward pass only
+#   "classifier_latency_ms": 44.2      # attentive classifier pass
+# }
+VJEPA_STATS_FILE = "/tmp/vjepa2_stats.json"
+VJEPA_STALE_SECS = 30  # consider stats stale after this many seconds
 
 # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -73,7 +91,6 @@ def gpu_usage():
     Read GPU load from /sys (Jetson-specific sysfs node).
     Returns percentage 0-100.
     """
-    # Try several known paths for different JetPack versions
     paths = [
         "/sys/devices/gpu.0/load",
         "/sys/devices/platform/gpu.0/load",
@@ -84,11 +101,9 @@ def gpu_usage():
         val = read_file(p)
         if val:
             try:
-                # Value is 0-1000, divide by 10 for percentage
                 return round(int(val) / 10.0, 1)
             except ValueError:
                 pass
-    # Fallback: parse tegrastats one-shot
     return _gpu_from_tegrastats()
 
 
@@ -151,7 +166,6 @@ def power_watts():
                 continue
             for hw in os.listdir(hwmon_dir):
                 hp = os.path.join(hwmon_dir, hw)
-                # Read channel labels and power
                 for ch in range(1, 4):
                     label = read_file(f"{hp}/in{ch}_label")
                     curr  = read_file(f"{hp}/curr{ch}_input", "0")
@@ -165,7 +179,6 @@ def power_watts():
     except Exception:
         pass
 
-    # Simpler fallback: /sys/bus/i2c power nodes on newer JetPack
     if not powers:
         try:
             for d in os.listdir("/sys/class/hwmon"):
@@ -188,6 +201,95 @@ def uptime_seconds():
     return round(float(raw.split()[0]))
 
 
+def vjepa2_metrics():
+    """
+    Read V-JEPA 2 inference metrics from shared stats file.
+
+    The V-JEPA 2 inference process writes a small JSON file at
+    VJEPA_STATS_FILE on each inference cycle. This is the cheapest
+    possible IPC — a single file write of ~200 bytes, no sockets,
+    no extra processes.
+
+    The inference script just needs to add these lines:
+        import json, time
+        stats = {
+            "inference_latency_ms": round((t_end - t_start) * 1000, 1),
+            "fps": round(frame_count / elapsed, 2),
+            "frames_processed": total_frames,
+            "model_loaded": True,
+            "last_update": time.time(),
+            "active_cameras": len(cameras),
+            "batch_size": batch_size,
+            "encoder_latency_ms": round(enc_time * 1000, 1),
+            "classifier_latency_ms": round(cls_time * 1000, 1),
+        }
+        with open("/tmp/vjepa2_stats.json", "w") as f:
+            json.dump(stats, f)
+    """
+    result = {
+        "model_loaded": False,
+        "inference_latency_ms": 0,
+        "fps": 0,
+        "frames_processed": 0,
+        "active_cameras": 0,
+        "batch_size": 0,
+        "encoder_latency_ms": 0,
+        "classifier_latency_ms": 0,
+        "status": "offline",
+    }
+
+    raw = read_file(VJEPA_STATS_FILE)
+    if not raw:
+        return result
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return result
+
+    # Check staleness — if the inference process crashed or stopped,
+    # we'll know because last_update won't be recent
+    last_update = data.get("last_update", 0)
+    age = time.time() - last_update
+    if age > VJEPA_STALE_SECS:
+        result["status"] = "stale"
+        result["stale_secs"] = round(age)
+        return result
+
+    result.update({
+        "model_loaded":          data.get("model_loaded", False),
+        "inference_latency_ms":  data.get("inference_latency_ms", 0),
+        "fps":                   data.get("fps", 0),
+        "frames_processed":      data.get("frames_processed", 0),
+        "active_cameras":        data.get("active_cameras", 0),
+        "batch_size":            data.get("batch_size", 0),
+        "encoder_latency_ms":    data.get("encoder_latency_ms", 0),
+        "classifier_latency_ms": data.get("classifier_latency_ms", 0),
+        "status":                "running" if data.get("model_loaded") else "loading",
+    })
+    return result
+
+
+# ── jetson_clocks status ─────────────────────────────────────────────
+
+def jetson_power_mode():
+    """Read current NVP model (power mode) — free, just reads sysfs."""
+    mode = read_file("/sys/module/tegra_fuse/parameters/tegra_chip_id")
+    nvp  = read_file("/etc/nvpmodel.conf")
+    # Simpler: just read nvpmodel -q output if available
+    try:
+        proc = subprocess.run(
+            ["nvpmodel", "-q"],
+            capture_output=True, text=True, timeout=2
+        )
+        m = re.search(r"NV Power Mode:\s*(\w+)", proc.stdout)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "unknown"
+
+
 # ── Main loop ───────────────────────────────────────────────────────
 
 def collect():
@@ -197,7 +299,6 @@ def collect():
     gpu = gpu_usage()
     pwr = power_watts()
 
-    # Pick the hottest sensor as "main" temp
     cpu_temp = temps.get("CPU-therm",
                temps.get("cpu-therm",
                max(temps.values()) if temps else 0))
@@ -217,6 +318,10 @@ def collect():
         "power":        pwr,
         "disk_pct":     disk_usage_pct(),
         "uptime":       uptime_seconds(),
+        # V-JEPA 2 inference metrics
+        "vjepa2":       vjepa2_metrics(),
+        # Power mode
+        "power_mode":   jetson_power_mode(),
     }
     return payload
 
@@ -229,6 +334,7 @@ def main():
     client.loop_start()
 
     print(f"[jetson-metrics] Publishing to {TOPIC} every {INTERVAL}s")
+    print(f"[jetson-metrics] V-JEPA 2 stats from: {VJEPA_STATS_FILE}")
     try:
         while True:
             data = collect()
