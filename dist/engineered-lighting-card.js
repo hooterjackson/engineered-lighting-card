@@ -1,11 +1,18 @@
 /**
- * Engineered Lighting Card v8
+ * Engineered Lighting Card v9
  * V-JEPA 2 World Model Dashboard
  *
  * Design: Liquid glass · Monochrome · Apple clarity
  * Light typography, calm ambient data, zero flicker.
- * Person-gated V-JEPA: only indoor cameras with person detected.
+ * Person-gated V-JEPA: strictly person_detected only.
  * Frigate stats via Supervisor ingress. No bounding boxes.
+ *
+ * v9 changes:
+ *  - _isVjepaInferring() strictly checks person_detected only
+ *  - Improved Frigate label legibility (higher contrast pills)
+ *  - Improved V-JEPA overlay legibility (stronger scrim, clearer hierarchy)
+ *  - Refined bottom metrics layout (wider cards, better spacing)
+ *  - Apple design polish (normalized typography, tighter grid)
  */
 class EngineeredLightingCard extends HTMLElement {
   constructor() {
@@ -130,11 +137,14 @@ class EngineeredLightingCard extends HTMLElement {
       timestamp: a.timestamp || null,
     };
   }
+
+  // v9: STRICTLY person_detected only — no motion_level fallback
   _isVjepaInferring(cn) {
     const act = this._getActivity(cn);
     if (!act) return false;
-    return act.person_detected || (act.motion_level !== null && act.motion_level > 0.01);
+    return act.person_detected;
   }
+
   _activityLabel(state) {
     if (!state || state === 'idle' || state === 'Empty' || state === 'unknown') return null;
     return state.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -329,6 +339,7 @@ class EngineeredLightingCard extends HTMLElement {
     const $ = id => this.shadowRoot.getElementById(id);
     const act = cam.vjepa ? this._getActivity(cam.name) : null;
     const fSt = this._frigateStats?.cameras?.[cam.name];
+    // v9: strictly person_detected
     const inferring = cam.vjepa && this._isVjepaInferring(cam.name);
     const personDetected = act && act.person_detected;
 
@@ -339,7 +350,6 @@ class EngineeredLightingCard extends HTMLElement {
     // Status badge
     const stEl = $(`status-${cam.name}`);
     if (stEl) {
-      // Check person detection from Frigate (works for all cameras)
       const hasPerson = this._getDetectedObjects(cam.name).includes('person');
       if (hasPerson) { this._st(stEl, 'Person'); this._sc(stEl, 'ov-status ov-s-person'); }
       else if (this._isMotionDetected(cam.name)) { this._st(stEl, 'Motion'); this._sc(stEl, 'ov-status ov-s-motion'); }
@@ -351,7 +361,7 @@ class EngineeredLightingCard extends HTMLElement {
       const ap = $(`act-${cam.name}`);
       const an = $(`act-name-${cam.name}`);
       const ac = $(`act-conf-${cam.name}`);
-      const as = $(`act-sec-${cam.name}`);
+      const as2 = $(`act-sec-${cam.name}`);
       const asc = $(`act-scores-${cam.name}`);
 
       if (personDetected) {
@@ -362,9 +372,9 @@ class EngineeredLightingCard extends HTMLElement {
           const pct = typeof act.confidence === 'number' ? (act.confidence > 1 ? act.confidence : act.confidence * 100) : 0;
           this._st(ac, pct.toFixed(0) + '%');
         }
-        if (as) {
+        if (as2) {
           const sec = act.secondary ? this._activityLabel(act.secondary) : null;
-          this._st(as, sec ? `${sec} ${(act.secondaryConf * 100).toFixed(0)}%` : '');
+          this._st(as2, sec ? `${sec} ${(act.secondaryConf * 100).toFixed(0)}%` : '');
         }
         if (asc && act.activityScores) {
           const key = JSON.stringify(act.activityScores);
@@ -383,12 +393,12 @@ class EngineeredLightingCard extends HTMLElement {
         if (ap && ap.classList.contains('act-on')) ap.classList.remove('act-on');
         if (an) { this._st(an, ''); this._sc(an, 'act-name'); }
         if (ac) this._st(ac, '');
-        if (as) this._st(as, '');
+        if (as2) this._st(as2, '');
         if (asc && asc.innerHTML) asc.innerHTML = '';
       }
     }
 
-    // Bottom data strip
+    // Bottom data strip — only full opacity when person detected (strict)
     if (act) {
       this._st($(`od-embed-${cam.name}`), act.embed_change !== null ? act.embed_change.toFixed(4) : '—');
       this._st($(`od-motion-${cam.name}`), act.motion_level !== null ? act.motion_level.toFixed(4) : '—');
@@ -400,8 +410,9 @@ class EngineeredLightingCard extends HTMLElement {
       this._st($(`od-fps-${cam.name}`), (fSt.camera_fps || 0).toFixed(0));
       this._st($(`od-dps-${cam.name}`), (fSt.detection_fps || 0).toFixed(1));
     }
+    // v9: opacity strictly tied to person_detected
     const db = $(`data-${cam.name}`);
-    if (db) db.style.opacity = personDetected || inferring ? '1' : '0.35';
+    if (db) db.style.opacity = personDetected ? '1' : '0.3';
 
     // Detection pills
     const objs = this._getDetectedObjects(cam.name);
@@ -479,7 +490,6 @@ class EngineeredLightingCard extends HTMLElement {
     });
     const jb = $('mc-jet-b');
     if (jb) {
-      // V-JEPA runs on Jetson, so if V-JEPA is online but Jetson sensors are unknown, the publisher is down
       const vjOnline = h.states['sensor.v_jepa_2_status']?.state === 'running';
       if (jOn) { jb.textContent = 'Online'; jb.className = 'mc-badge badge-on'; }
       else if (vjOnline) { jb.textContent = 'No Metrics'; jb.className = 'mc-badge badge-warn'; }
@@ -500,6 +510,7 @@ class EngineeredLightingCard extends HTMLElement {
         sv(eid, v);
       }
     }
+    // v9: strictly person_detected count
     let ic=0; this._config.cameras.forEach(c => { if (c.vjepa && this._isVjepaInferring(c.name)) ic++; });
     sv('mc-vj-inf', `${ic}/3`);
     const vjb = $('mc-vj-b');
@@ -514,12 +525,12 @@ class EngineeredLightingCard extends HTMLElement {
     :host {
       --bg: #000;
       --g1: rgba(255,255,255,0.035);
-      --g2: rgba(255,255,255,0.06);
-      --g3: rgba(255,255,255,0.09);
-      --t1: rgba(255,255,255,0.88);
-      --t2: rgba(255,255,255,0.50);
-      --t3: rgba(255,255,255,0.30);
-      --t4: rgba(255,255,255,0.16);
+      --g2: rgba(255,255,255,0.07);
+      --g3: rgba(255,255,255,0.11);
+      --t1: rgba(255,255,255,0.92);
+      --t2: rgba(255,255,255,0.60);
+      --t3: rgba(255,255,255,0.38);
+      --t4: rgba(255,255,255,0.20);
       --r: 12px; --rs: 8px;
       --ease: cubic-bezier(.25,.1,.25,1);
       --blur: blur(24px); --blurs: blur(16px);
@@ -536,11 +547,11 @@ class EngineeredLightingCard extends HTMLElement {
     /* Header */
     .hdr {
       display: flex; justify-content: space-between; align-items: center;
-      padding: 10px 16px; background: var(--g1);
+      padding: 10px 20px; background: var(--g1);
       border-bottom: 1px solid var(--g2); flex-shrink: 0; z-index: 10;
     }
     .hdr-l { display: flex; flex-direction: column; gap: 2px; }
-    .hdr-r { display: flex; align-items: center; gap: 20px; }
+    .hdr-r { display: flex; align-items: center; gap: 24px; }
     .hdr-title { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
     .hdr-sub { font-size: 9px; color: var(--t4); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
     .hdr-stat { display: flex; flex-direction: column; align-items: center; gap: 1px; }
@@ -559,7 +570,7 @@ class EngineeredLightingCard extends HTMLElement {
     /* Scroll */
     .scroll-area {
       flex: 1; overflow-y: auto; overflow-x: hidden;
-      padding: 8px 10px 210px;
+      padding: 10px 12px 220px;
       -webkit-overflow-scrolling: touch;
     }
     .scroll-area::-webkit-scrollbar { width: 2px; }
@@ -567,8 +578,8 @@ class EngineeredLightingCard extends HTMLElement {
     .scroll-area::-webkit-scrollbar-thumb { background: var(--g2); border-radius: 2px; }
 
     /* Grids */
-    .grid-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
-    .grid-secondary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .grid-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .grid-secondary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 
     .cam-vp {
       position: relative; background: #080808; border-radius: var(--r); overflow: hidden;
@@ -576,140 +587,144 @@ class EngineeredLightingCard extends HTMLElement {
     }
     .cam-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-    /* Overlays */
+    /* ── Overlays: improved legibility v9 ── */
     .ov-top {
       position: absolute; top: 0; left: 0; right: 0;
       display: flex; align-items: center; gap: 6px;
       padding: 8px 10px; z-index: 5;
-      background: linear-gradient(180deg, rgba(0,0,0,0.50) 0%, transparent 100%);
+      background: linear-gradient(180deg, rgba(0,0,0,0.60) 0%, rgba(0,0,0,0.20) 70%, transparent 100%);
     }
     .ov-label {
-      font-size: 11px; font-weight: 500; letter-spacing: -0.005em;
-      text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+      font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
+      color: rgba(255,255,255,0.95);
+      text-shadow: 0 1px 6px rgba(0,0,0,1), 0 0px 2px rgba(0,0,0,0.8);
     }
     .ov-pipe {
       display: flex; align-items: center; gap: 3px;
-      font-size: 7px; font-weight: 600; color: var(--t4);
+      font-size: 8px; font-weight: 600; color: var(--t4);
       text-transform: uppercase; letter-spacing: 0.5px;
       opacity: 0; transition: opacity 0.5s var(--ease);
+      text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+    }
+    .ov-pipe.pipe-on { opacity: 1; color: rgba(255,255,255,0.70); }
+    .pipe-dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,0.65); animation: pulse 1.2s ease-in-out infinite; }
+    .ov-status {
+      margin-left: auto; font-size: 9px; font-weight: 600;
+      padding: 2px 8px; border-radius: 100px;
+      background: rgba(0,0,0,0.35); color: var(--t3);
+      backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
+      border: 1px solid rgba(255,255,255,0.06);
       text-shadow: 0 1px 3px rgba(0,0,0,0.8);
     }
-    .ov-pipe.pipe-on { opacity: 1; color: var(--t3); }
-    .pipe-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--t3); animation: pulse 1.2s ease-in-out infinite; }
-    .ov-status {
-      margin-left: auto; font-size: 9px; font-weight: 500;
-      padding: 2px 8px; border-radius: 100px;
-      background: rgba(255,255,255,0.05); color: var(--t4);
-      backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
-    }
-    .ov-s-person { background: rgba(255,255,255,0.10); color: var(--t2); }
-    .ov-s-motion { background: rgba(255,255,255,0.07); color: var(--t3); }
+    .ov-s-person { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.85); border-color: rgba(255,255,255,0.15); }
+    .ov-s-motion { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.55); }
 
-    /* Detection pills */
+    /* Detection pills — v9: higher contrast */
     .ov-detect {
-      position: absolute; top: 30px; left: 0; right: 0; z-index: 4; pointer-events: none;
-      display: flex; flex-wrap: wrap; gap: 3px; padding: 2px 8px;
+      position: absolute; top: 32px; left: 0; right: 0; z-index: 4; pointer-events: none;
+      display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 10px;
     }
     .dp {
-      padding: 2px 7px; border-radius: 100px; font-size: 9px; font-weight: 500;
-      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.10); color: var(--t2);
+      padding: 2px 8px; border-radius: 100px; font-size: 10px; font-weight: 600;
+      background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.18); color: rgba(255,255,255,0.88);
       backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
+      text-shadow: 0 1px 3px rgba(0,0,0,0.9);
     }
-    .dp-snd { font-style: italic; color: var(--t3); }
+    .dp-snd { font-style: italic; color: rgba(255,255,255,0.60); font-weight: 500; }
 
-    /* V-JEPA Activity overlay with subtle scrim */
+    /* V-JEPA Activity overlay — v9: stronger scrim, clearer hierarchy */
     .ov-activity {
-      position: absolute; bottom: 22px; left: 0; right: 0; z-index: 5;
-      opacity: 0.2; transition: opacity 0.5s var(--ease);
+      position: absolute; bottom: 24px; left: 0; right: 0; z-index: 5;
+      opacity: 0.15; transition: opacity 0.5s var(--ease);
     }
     .ov-activity.act-on { opacity: 1; }
     .act-scrim {
-      position: absolute; inset: -8px -4px -4px -4px;
-      background: linear-gradient(0deg, rgba(0,0,0,0.50) 0%, rgba(0,0,0,0.25) 60%, transparent 100%);
+      position: absolute; inset: -12px -4px -6px -4px;
+      background: linear-gradient(0deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.35) 55%, transparent 100%);
       border-radius: 8px;
       pointer-events: none;
     }
-    .act-content { position: relative; z-index: 1; padding: 6px 10px; }
+    .act-content { position: relative; z-index: 1; padding: 8px 12px; }
     .act-main { display: flex; align-items: baseline; gap: 8px; }
     .act-name {
-      font-size: 17px; font-weight: 500; color: var(--t4);
+      font-size: 18px; font-weight: 500; color: var(--t4);
       letter-spacing: -0.02em;
-      text-shadow: 0 1px 8px rgba(0,0,0,0.9);
+      text-shadow: 0 1px 10px rgba(0,0,0,1), 0 0px 3px rgba(0,0,0,0.9);
       transition: color 0.4s var(--ease);
     }
-    .act-name-on { color: var(--t1); }
+    .act-name-on { color: rgba(255,255,255,0.95); }
     .act-conf {
-      font-size: 13px; font-weight: 400; color: var(--t3); font-variant-numeric: tabular-nums;
-      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+      font-size: 14px; font-weight: 400; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 6px rgba(0,0,0,0.9);
     }
     .act-sec {
-      font-size: 10px; color: var(--t3); font-weight: 400; min-height: 13px;
-      text-shadow: 0 1px 3px rgba(0,0,0,0.7);
-      margin-top: 1px;
+      font-size: 11px; color: rgba(255,255,255,0.45); font-weight: 400; min-height: 14px;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+      margin-top: 2px;
     }
-    .act-scores { display: flex; flex-direction: column; gap: 2px; padding: 3px 0 0; }
-    .sr { display: flex; align-items: center; gap: 4px; }
-    .sr-n { font-size: 8px; font-weight: 400; color: var(--t4); width: 42px; flex-shrink: 0; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,0.7); }
-    .sr-bar { flex: 1; height: 1.5px; border-radius: 1px; background: rgba(255,255,255,0.06); overflow: hidden; }
-    .sr-fill { height: 100%; border-radius: 1px; background: rgba(255,255,255,0.30); transition: width 0.4s var(--ease); }
-    .sr-v { font-size: 8px; font-weight: 500; color: var(--t4); font-variant-numeric: tabular-nums; width: 22px; text-align: right; flex-shrink: 0; text-shadow: 0 1px 2px rgba(0,0,0,0.7); }
+    .act-scores { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 0; }
+    .sr { display: flex; align-items: center; gap: 5px; }
+    .sr-n { font-size: 9px; font-weight: 400; color: rgba(255,255,255,0.45); width: 44px; flex-shrink: 0; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+    .sr-bar { flex: 1; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.08); overflow: hidden; }
+    .sr-fill { height: 100%; border-radius: 1px; background: rgba(255,255,255,0.40); transition: width 0.4s var(--ease); }
+    .sr-v { font-size: 9px; font-weight: 500; color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; width: 24px; text-align: right; flex-shrink: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
 
-    /* Bottom data strip */
+    /* Bottom data strip — v9: improved contrast */
     .ov-data {
       position: absolute; bottom: 0; left: 0; right: 0; z-index: 5;
-      display: flex; align-items: center; gap: 8px; padding: 4px 10px;
-      background: rgba(0,0,0,0.45);
+      display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+      background: rgba(0,0,0,0.55);
       backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
       transition: opacity 0.5s var(--ease);
     }
-    .od { display: flex; align-items: center; gap: 2px; }
-    .od-l { font-size: 7px; font-weight: 500; color: var(--t4); text-transform: uppercase; letter-spacing: 0.3px; }
-    .od-v { font-size: 8px; font-weight: 500; font-family: 'SF Mono','Menlo',monospace; color: var(--t3); font-variant-numeric: tabular-nums; }
-    .od-sep { width: 1px; height: 8px; background: var(--g2); margin: 0 2px; }
-    .od-ts { font-size: 7px; color: var(--t4); margin-left: auto; font-variant-numeric: tabular-nums; }
+    .od { display: flex; align-items: center; gap: 3px; }
+    .od-l { font-size: 8px; font-weight: 500; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.3px; }
+    .od-v { font-size: 9px; font-weight: 500; font-family: 'SF Mono','Menlo',monospace; color: rgba(255,255,255,0.50); font-variant-numeric: tabular-nums; }
+    .od-sep { width: 1px; height: 8px; background: rgba(255,255,255,0.08); margin: 0 2px; }
+    .od-ts { font-size: 8px; color: rgba(255,255,255,0.30); margin-left: auto; font-variant-numeric: tabular-nums; }
 
-    /* Fixed metrics pane — no dark bg, no border */
+    /* Fixed metrics pane — v9: refined layout */
     .metrics-pane {
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
-      padding: 8px 10px 10px;
+      padding: 10px 12px 12px;
     }
     .metrics-grid {
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
-      max-width: 1600px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+      max-width: 1800px; margin: 0 auto;
     }
     .mc {
-      background: rgba(10,10,12,0.88); border: 1px solid var(--g2); border-radius: var(--r);
-      padding: 12px 14px;
+      background: rgba(8,8,10,0.92); border: 1px solid var(--g2); border-radius: var(--r);
+      padding: 14px 16px;
       backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
     }
     .mc:hover { border-color: var(--g3); }
-    .mc-accent { border-color: rgba(255,255,255,0.08); }
+    .mc-accent { border-color: rgba(255,255,255,0.10); }
 
-    .mc-hdr { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-    .mc-t { font-size: 10px; font-weight: 600; flex: 1; color: var(--t3); letter-spacing: -0.01em; }
-    .mc-badge { font-size: 8px; font-weight: 600; padding: 2px 7px; border-radius: 100px; background: var(--g1); color: var(--t4); }
-    .mc-badge.badge-on { background: rgba(255,255,255,0.06); color: var(--t2); }
-    .mc-badge.badge-warn { background: rgba(255,255,255,0.04); color: var(--t3); }
+    .mc-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .mc-t { font-size: 11px; font-weight: 600; flex: 1; color: var(--t2); letter-spacing: -0.01em; }
+    .mc-badge { font-size: 8px; font-weight: 600; padding: 2px 8px; border-radius: 100px; background: var(--g1); color: var(--t4); letter-spacing: 0.02em; }
+    .mc-badge.badge-on { background: rgba(255,255,255,0.08); color: var(--t2); }
+    .mc-badge.badge-warn { background: rgba(255,255,255,0.05); color: var(--t3); }
 
-    .mc-body { display: flex; flex-direction: column; gap: 5px; }
-    .mc-r { display: flex; align-items: center; gap: 8px; }
-    .mc-r-mdl { margin-top: 3px; padding-top: 5px; border-top: 1px solid var(--g2); }
-    .mc-l { font-size: 9px; color: var(--t4); width: 52px; flex-shrink: 0; font-weight: 400; }
-    .mc-bar { flex: 1; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.04); overflow: hidden; }
-    .mc-fill { height: 100%; border-radius: 1px; transition: width 0.6s var(--ease); width: 0%; background: rgba(255,255,255,0.25); }
-    .mc-v { font-size: 9px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--t2); min-width: 52px; text-align: right; }
-    .mc-mdl { font-size: 8px; color: var(--t4); font-family: 'SF Mono','Menlo',monospace; letter-spacing: 0.2px; font-weight: 400; }
+    .mc-body { display: flex; flex-direction: column; gap: 6px; }
+    .mc-r { display: flex; align-items: center; gap: 10px; }
+    .mc-r-mdl { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--g2); }
+    .mc-l { font-size: 10px; color: var(--t3); width: 56px; flex-shrink: 0; font-weight: 400; }
+    .mc-bar { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.05); overflow: hidden; }
+    .mc-fill { height: 100%; border-radius: 2px; transition: width 0.6s var(--ease); width: 0%; background: rgba(255,255,255,0.30); }
+    .mc-v { font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--t2); min-width: 56px; text-align: right; }
+    .mc-mdl { font-size: 9px; color: var(--t3); font-family: 'SF Mono','Menlo',monospace; letter-spacing: 0.2px; font-weight: 400; }
 
     @media (max-width: 1000px) {
       .metrics-grid { grid-template-columns: repeat(2, 1fr); }
       .grid-secondary { grid-template-columns: repeat(2, 1fr); }
-      .scroll-area { padding-bottom: 340px; }
+      .scroll-area { padding-bottom: 360px; }
     }
     @media (max-width: 600px) {
       .grid-primary { grid-template-columns: 1fr; }
       .grid-secondary { grid-template-columns: 1fr; }
       .metrics-grid { grid-template-columns: 1fr 1fr; }
-      .scroll-area { padding-bottom: 400px; }
+      .scroll-area { padding-bottom: 420px; }
     }
     `;
   }
@@ -722,5 +737,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'engineered-lighting-card',
   name: 'Engineered Lighting',
-  description: 'V-JEPA 2 World Model Dashboard v8'
+  description: 'V-JEPA 2 World Model Dashboard v9'
 });
