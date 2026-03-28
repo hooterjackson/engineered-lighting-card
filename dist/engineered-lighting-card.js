@@ -120,11 +120,17 @@ class EngineeredLightingCard extends HTMLElement {
     const a = s.attributes || {};
     const o = (typeof a.activity === 'object' && a.activity !== null) ? a.activity : null;
     return {
+      // Head 1: Posture
+      posture: a.posture || null,
+      postureConf: a.posture_confidence !== undefined ? parseFloat(a.posture_confidence) : null,
+      postureScores: a.posture_scores || null,
+      // Head 2: Activity
       activity: o ? o.activity : (a.activity || s.state),
       confidence: o ? o.activity_confidence : (a.activity_confidence || a.confidence || null),
       secondary: o ? o.secondary_activity : (a.secondary_activity || null),
       secondaryConf: o ? o.secondary_confidence : (a.secondary_confidence || 0),
       activityScores: o ? o.activity_scores : (a.activity_scores || null),
+      // Shared features
       embed_change: a.embed_change !== undefined ? parseFloat(a.embed_change) : null,
       motion_level: a.motion_level !== undefined ? parseFloat(a.motion_level) : null,
       trend: a.trend !== undefined ? parseFloat(a.trend) : null,
@@ -138,7 +144,8 @@ class EngineeredLightingCard extends HTMLElement {
     return act.person_detected;
   }
   _activityLabel(state) {
-    if (!state || state === 'idle' || state === 'Empty' || state === 'unknown') return null;
+    if (!state || state === 'Empty' || state === 'unknown' || state === 'none') return null;
+    // 'idle' is now a valid activity label in two-head mode (person present but inactive)
     return state.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   }
   _fmtTime(iso) {
@@ -400,11 +407,16 @@ class EngineeredLightingCard extends HTMLElement {
       const asc = $(`act-scores-${cam.name}`);
       if (personDetected) {
         if (ap && !ap.classList.contains('act-on')) ap.classList.add('act-on');
-        const lbl = this._activityLabel(act.activity) || 'Detected';
-        if (an) { this._st(an, lbl); this._sc(an, 'act-name act-name-on'); }
+        // Two-head display: "Posture · Activity"
+        const postureLbl = act.posture ? this._activityLabel(act.posture) : null;
+        const activityLbl = this._activityLabel(act.activity) || 'Detected';
+        const combinedLbl = postureLbl && activityLbl && postureLbl !== activityLbl
+          ? `${postureLbl} · ${activityLbl}` : (activityLbl || postureLbl || 'Detected');
+        if (an) { this._st(an, combinedLbl); this._sc(an, 'act-name act-name-on'); }
         if (ac) {
           const pct = typeof act.confidence === 'number' ? (act.confidence > 1 ? act.confidence : act.confidence * 100) : 0;
-          this._st(ac, pct.toFixed(0) + '%');
+          const postPct = typeof act.postureConf === 'number' ? (act.postureConf > 1 ? act.postureConf : act.postureConf * 100) : null;
+          this._st(ac, postPct !== null ? `P:${postPct.toFixed(0)}% A:${pct.toFixed(0)}%` : pct.toFixed(0) + '%');
         }
         if (as2) {
           const sec = act.secondary ? this._activityLabel(act.secondary) : null;
