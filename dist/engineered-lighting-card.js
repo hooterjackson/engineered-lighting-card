@@ -645,7 +645,7 @@ class EngineeredLightingCard extends HTMLElement {
     /* ── Scroll ── */
     .scroll-area {
       flex: 1; overflow-y: auto; overflow-x: hidden;
-      padding: 10px 12px 200px;
+      padding: 10px 12px 12px;
       -webkit-overflow-scrolling: touch;
     }
     .scroll-area::-webkit-scrollbar { width: 2px; }
@@ -761,10 +761,11 @@ class EngineeredLightingCard extends HTMLElement {
     .od-sep { width: 1px; height: 8px; background: rgba(255,255,255,0.08); margin: 0 2px; }
     .od-ts { font-size: 8px; color: rgba(255,255,255,0.28); margin-left: auto; font-variant-numeric: tabular-nums; }
 
-    /* ── Fixed metrics pane v11: two pipeline stages ── */
+    /* ── Metrics pane v11: flex child at bottom, never overlaps HA sidebar ── */
     .metrics-pane {
-      position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
-      padding: 12px 16px 14px;
+      flex-shrink: 0; z-index: 20;
+      padding: 10px 16px 12px;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.9) 12%, #000 100%);
     }
     .metrics-grid {
       display: grid;
@@ -888,14 +889,14 @@ class EngineeredLightingCard extends HTMLElement {
     @media (max-width: 1000px) {
       .metrics-grid { grid-template-columns: 1fr auto 1fr; }
       .grid-secondary { grid-template-columns: repeat(2, 1fr); }
-      .scroll-area { padding-bottom: 360px; }
+      .scroll-area { padding-bottom: 12px; }
     }
     @media (max-width: 600px) {
       .grid-primary { grid-template-columns: 1fr; }
       .grid-secondary { grid-template-columns: 1fr; }
       .metrics-grid { grid-template-columns: 1fr; }
       .mc-flow { display: none; }
-      .scroll-area { padding-bottom: 500px; }
+      .scroll-area { padding-bottom: 12px; }
     }
     `;
   }
