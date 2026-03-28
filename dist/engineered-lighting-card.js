@@ -34,7 +34,6 @@ class EngineeredLightingCard extends HTMLElement {
     this._ingressEntry = null;
     this._ingressSlug = 'ccab4aaf_frigate-fa';
   }
-
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
@@ -42,14 +41,12 @@ class EngineeredLightingCard extends HTMLElement {
     this._update();
     if (first) this._poll();
   }
-
   setConfig(c) {
     this._config = {
       cameras: c.cameras || [
         { name: 'driveway',   entity: 'camera.driveway',   label: 'Living Room',  primary: true,  vjepa: true  },
         { name: 'dining_room',entity: 'camera.dining_room', label: 'Dining Room', primary: true,  vjepa: true  },
         { name: 'kitchen',    entity: 'camera.kitchen',     label: 'Kitchen',     primary: false, vjepa: true  },
-        { name: 'living_room',entity: 'camera.living_room', label: 'Driveway',    primary: false, vjepa: false },
         { name: 'back_door',  entity: 'camera.back_door',   label: 'Back Door',   primary: false, vjepa: false },
       ],
       frigate_url: c.frigate_url || 'http://192.168.175.114:5000',
@@ -59,24 +56,20 @@ class EngineeredLightingCard extends HTMLElement {
     };
     this._ingressSlug = this._config.frigate_addon_slug;
   }
-
   static getConfigElement() { return document.createElement('div'); }
   static getStubConfig() {
     return { cameras: [
       { name: 'driveway',    entity: 'camera.driveway',    label: 'Living Room',  primary: true,  vjepa: true  },
       { name: 'dining_room', entity: 'camera.dining_room', label: 'Dining Room',  primary: true,  vjepa: true  },
       { name: 'kitchen',     entity: 'camera.kitchen',     label: 'Kitchen',      primary: false, vjepa: true  },
-      { name: 'living_room', entity: 'camera.living_room', label: 'Driveway',     primary: false, vjepa: false },
       { name: 'back_door',   entity: 'camera.back_door',   label: 'Back Door',    primary: false, vjepa: false },
     ]};
   }
   getCardSize() { return 28; }
-
   disconnectedCallback() {
     this._timers.forEach(t => clearInterval(t));
     this._timers = [];
   }
-
   // ── Snapshots: no bounding boxes ──
   _snapUrl(cam) {
     if (this._failedCams.has(cam.name)) return this._snapUrlHA(cam);
@@ -88,7 +81,6 @@ class EngineeredLightingCard extends HTMLElement {
     if (!s) return '';
     return `/api/camera_proxy/${cam.entity}?token=${s.attributes.access_token}&ts=${Date.now()}`;
   }
-
   // ── Detections with persistence ──
   _getDetectedObjects(camName) {
     const objects = ['person','dog','cat','bottle','cup','bowl','chair','couch','dining_table','cell_phone','laptop','tv','book','remote','potted_plant','oven','backpack','handbag','suitcase','clock','car','truck','bicycle','motorcycle'];
@@ -121,7 +113,6 @@ class EngineeredLightingCard extends HTMLElement {
   _getSoundLabel(snd) { return snd.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); }
   _isMotionDetected(cn) { const s = this._hass?.states[`binary_sensor.${cn}_motion`]; return s && s.state === 'on'; }
   _getSwitch(cn, t) { const s = this._hass?.states[`switch.${cn}_${t}`]; return s ? s.state === 'on' : false; }
-
   // ── V-JEPA 2 Activity ──
   _getActivity(camName) {
     const s = this._hass?.states[`sensor.${camName}_activity`];
@@ -141,13 +132,11 @@ class EngineeredLightingCard extends HTMLElement {
       timestamp: a.timestamp || null,
     };
   }
-
   _isVjepaInferring(cn) {
     const act = this._getActivity(cn);
     if (!act) return false;
     return act.person_detected;
   }
-
   _activityLabel(state) {
     if (!state || state === 'idle' || state === 'Empty' || state === 'unknown') return null;
     return state.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -157,13 +146,11 @@ class EngineeredLightingCard extends HTMLElement {
     const d = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
     if (d < 5) return 'now'; if (d < 60) return `${d}s`; if (d < 3600) return `${Math.floor(d/60)}m`; return `${Math.floor(d/3600)}h`;
   }
-
   // ── Render ──
   _render() {
     const cams = this._config.cameras;
     const primary = cams.filter(c => c.primary);
     const secondary = cams.filter(c => !c.primary);
-
     const camHTML = (cam, cls) => `
       <div class="cam-cell ${cls}" id="cell-${cam.name}">
         <div class="cam-vp">
@@ -198,7 +185,6 @@ class EngineeredLightingCard extends HTMLElement {
           </div>
         </div>
       </div>`;
-
     this.shadowRoot.innerHTML = `
       <style>${this._css()}</style>
       <div class="el-root">
@@ -209,19 +195,16 @@ class EngineeredLightingCard extends HTMLElement {
           </div>
           <div class="hdr-r">
             <div class="hdr-stat"><span class="hdr-sv" id="hdr-obj">0</span><span class="hdr-sl">Objects</span></div>
-            <div class="hdr-stat"><span class="hdr-sv">5</span><span class="hdr-sl">Cameras</span></div>
+            <div class="hdr-stat"><span class="hdr-sv">4</span><span class="hdr-sl">Cameras</span></div>
             <div class="pill" id="pill"><span class="pill-dot"></span>Active</div>
           </div>
         </header>
-
         <div class="scroll-area">
           <div class="grid-primary">${primary.map(c => camHTML(c, 'cam-lg')).join('')}</div>
           <div class="grid-secondary">${secondary.map(c => camHTML(c, 'cam-sm')).join('')}</div>
         </div>
-
         <div class="metrics-pane">
           <div class="metrics-grid">
-
             <!-- Stage 1: Detection Pipeline -->
             <div class="mc">
               <div class="mc-stage">
@@ -263,14 +246,12 @@ class EngineeredLightingCard extends HTMLElement {
                 </div>
               </div>
             </div>
-
             <!-- Pipeline flow indicator -->
             <div class="mc-flow">
               <div class="mc-flow-line"></div>
               <div class="mc-flow-arrow">→</div>
               <div class="mc-flow-line"></div>
             </div>
-
             <!-- Stage 2: Scene Understanding -->
             <div class="mc">
               <div class="mc-stage">
@@ -322,7 +303,6 @@ class EngineeredLightingCard extends HTMLElement {
                 <div class="mc-model" id="mc-vj-mdl">ViT-L · FP16 · CUDA</div>
               </div>
             </div>
-
           </div>
         </div>
       </div>
@@ -332,7 +312,6 @@ class EngineeredLightingCard extends HTMLElement {
       if (img) img.onerror = () => { if (!this._failedCams.has(cam.name)) { this._failedCams.add(cam.name); img.src = this._snapUrlHA(cam); } };
     });
   }
-
   // ── Polling ──
   _poll() {
     const t1 = setInterval(() => {
@@ -354,7 +333,6 @@ class EngineeredLightingCard extends HTMLElement {
     });
     this._fetchFrigate();
   }
-
   async _fetchFrigate() {
     if (!this._hass) return;
     if (!this._ingressEntry) {
@@ -381,7 +359,6 @@ class EngineeredLightingCard extends HTMLElement {
     } catch(e) {}
     try { const r = await fetch(this._config.frigate_url + '/api/stats'); if (r.ok) this._frigateStats = await r.json(); } catch(e) {}
   }
-
   // ── Update ──
   _update() {
     if (!this._hass) return;
@@ -397,28 +374,23 @@ class EngineeredLightingCard extends HTMLElement {
       if (pill.innerHTML !== h) { pill.innerHTML = h; pill.className = on ? 'pill' : 'pill pill-off'; }
     }
   }
-
   _st(id, v) { const e = typeof id === 'string' ? this.shadowRoot.getElementById(id) : id; if (e && e.textContent !== v) e.textContent = v; }
   _sc(e, c) { if (e && e.className !== c) e.className = c; }
-
   _updateCam(cam) {
     const $ = id => this.shadowRoot.getElementById(id);
     const act = cam.vjepa ? this._getActivity(cam.name) : null;
     const fSt = this._frigateStats?.cameras?.[cam.name];
     const inferring = cam.vjepa && this._isVjepaInferring(cam.name);
     const personDetected = act && act.person_detected;
-
     // Pipeline indicator
     const pipe = $(`pipe-${cam.name}`);
     if (pipe) this._sc(pipe, inferring ? 'ov-pipe pipe-on' : 'ov-pipe');
-
     // v11: Cell border glow when person detected
     const cell = $(`cell-${cam.name}`);
     if (cell) {
       const vp = cell.querySelector('.cam-vp');
       if (vp) vp.className = personDetected ? 'cam-vp vp-active' : (this._isMotionDetected(cam.name) ? 'cam-vp vp-motion' : 'cam-vp');
     }
-
     // V-JEPA 2 activity
     if (cam.vjepa) {
       const ap = $(`act-${cam.name}`);
@@ -426,7 +398,6 @@ class EngineeredLightingCard extends HTMLElement {
       const ac = $(`act-conf-${cam.name}`);
       const as2 = $(`act-sec-${cam.name}`);
       const asc = $(`act-scores-${cam.name}`);
-
       if (personDetected) {
         if (ap && !ap.classList.contains('act-on')) ap.classList.add('act-on');
         const lbl = this._activityLabel(act.activity) || 'Detected';
@@ -460,7 +431,6 @@ class EngineeredLightingCard extends HTMLElement {
         if (asc && asc.innerHTML) asc.innerHTML = '';
       }
     }
-
     // Bottom data strip
     if (fSt) {
       this._st($(`od-fps-${cam.name}`), (fSt.camera_fps || 0).toFixed(0));
@@ -478,7 +448,6 @@ class EngineeredLightingCard extends HTMLElement {
     }
     const db = $(`data-${cam.name}`);
     if (db) db.style.opacity = personDetected ? '1' : '0.45';
-
     // Detection pills
     const objs = this._getDetectedObjects(cam.name);
     const snds = this._getDetectedSounds(cam.name);
@@ -495,18 +464,15 @@ class EngineeredLightingCard extends HTMLElement {
     }
     return objs.length;
   }
-
   _updateMetrics() {
     const h = this._hass; if (!h) return;
     const $ = id => this.shadowRoot.getElementById(id);
     const bar = (id, p) => { const b = $(id); if (b) b.style.width = Math.min(100, p||0)+'%'; };
     const sv = (id, v) => this._st(id, String(v));
-
     // ── Detection Pipeline (Frigate + Coral) ──
     const st = this._frigateStats;
     const hasFri = st && (st.service || st.cpu_usages);
     let hasCoral = false;
-
     if (st?.cpu_usages?.['frigate.full_system']) {
       const fs = st.cpu_usages['frigate.full_system'];
       const cpu = parseFloat(fs.cpu)||0, mem = parseFloat(fs.mem)||0;
@@ -519,8 +485,7 @@ class EngineeredLightingCard extends HTMLElement {
     }
     let dc=0;
     this._config.cameras.forEach(c => { if (this._getSwitch(c.name,'detect')) dc++; });
-    sv('mc-fri-det', `${dc}/5`);
-
+    sv('mc-fri-det', `${dc}/4`);
     if (st?.detectors) {
       const det = Object.values(st.detectors)[0];
       if (det) {
@@ -533,7 +498,6 @@ class EngineeredLightingCard extends HTMLElement {
       const t = temps.apex_0 !== undefined ? temps.apex_0 : Object.values(temps)[0];
       if (t !== undefined) sv('mc-coral-tmp', t.toFixed(1)+'°C');
     }
-
     // Detection badge
     const db = $('mc-det-b');
     if (db) {
@@ -541,7 +505,6 @@ class EngineeredLightingCard extends HTMLElement {
       db.textContent = on ? 'Online' : '—';
       db.className = on ? 'mc-badge badge-on' : 'mc-badge';
     }
-
     // ── Understanding Pipeline (Jetson + V-JEPA) ──
     let jOn = false;
     const jcpu = h.states['sensor.jetson_cpu_usage'];
@@ -554,7 +517,7 @@ class EngineeredLightingCard extends HTMLElement {
       jOn=true; const v=parseFloat(jgpu.state)||0;
       sv('mc-jet-gpu', v.toFixed(0)+'%'); bar('mc-jet-gpu-bar', v);
     }
-    const jr = h.states['sensor.jetson_ram_usage'];
+    const jr = h.states['sensor.jetson_orin_nano_jetson_ram_usage'];
     if (jr && jr.state !== 'unavailable' && jr.state !== 'unknown') {
       jOn=true; const a=jr.attributes||{};
       sv('mc-jet-ram', `${a.ram_used_mb?(a.ram_used_mb/1024).toFixed(1):'?'}/${a.ram_total_mb?(a.ram_total_mb/1024).toFixed(1):'?'} GB`);
@@ -564,7 +527,6 @@ class EngineeredLightingCard extends HTMLElement {
     if (jct && jct.state !== 'unavailable' && jct.state !== 'unknown') {
       jOn=true; sv('mc-jet-ct', jct.state+'°C');
     } else sv('mc-jet-ct', '—');
-
     // V-JEPA
     const vFps = h.states['sensor.v_jepa_2_fps'];
     if (vFps && vFps.state !== 'unavailable' && vFps.state !== 'unknown') {
@@ -576,11 +538,10 @@ class EngineeredLightingCard extends HTMLElement {
     }
     const vCam = h.states['sensor.v_jepa_2_active_cameras'];
     if (vCam && vCam.state !== 'unavailable' && vCam.state !== 'unknown') {
-      sv('mc-vj-cam', vCam.state+'/5');
+      sv('mc-vj-cam', vCam.state+'/4');
     }
     let ic=0; this._config.cameras.forEach(c => { if (c.vjepa && this._isVjepaInferring(c.name)) ic++; });
     sv('mc-vj-inf', `${ic}/3`);
-
     // Understanding badge
     const ub = $('mc-und-b');
     if (ub) {
@@ -589,15 +550,15 @@ class EngineeredLightingCard extends HTMLElement {
       else if (running) { ub.textContent = 'No Metrics'; ub.className = 'mc-badge badge-warn'; }
       else { ub.textContent = 'Offline'; ub.className = 'mc-badge'; }
     }
-
     const vStatus = h.states['sensor.v_jepa_2_status'];
     if (vStatus?.attributes) sv('mc-vj-mdl', `${vStatus.attributes.model||'ViT-L'} · ${vStatus.attributes.precision||'FP16'} · CUDA`);
   }
-
   // ── CSS ──
   _css() {
     return `
     :host {
+      position: relative;
+      z-index: 0;
       --bg: #000;
       --g1: rgba(255,255,255,0.025);
       --g2: rgba(255,255,255,0.055);
@@ -611,14 +572,12 @@ class EngineeredLightingCard extends HTMLElement {
       --blur: blur(40px); --blurs: blur(20px);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     .el-root {
       background: var(--bg);
       font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', system-ui, sans-serif;
       color: var(--t1); -webkit-font-smoothing: antialiased;
       height: 100vh; display: flex; flex-direction: column; overflow: hidden;
     }
-
     /* ── Header ── */
     .hdr {
       display: flex; justify-content: space-between; align-items: center;
@@ -641,7 +600,6 @@ class EngineeredLightingCard extends HTMLElement {
     .pill-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--t3); animation: pulse 2.5s ease-in-out infinite; }
     .pill-dot.off { background: var(--t4); animation: none; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.15} }
-
     /* ── Scroll ── */
     .scroll-area {
       flex: 1; overflow-y: auto; overflow-x: hidden;
@@ -651,11 +609,9 @@ class EngineeredLightingCard extends HTMLElement {
     .scroll-area::-webkit-scrollbar { width: 2px; }
     .scroll-area::-webkit-scrollbar-track { background: transparent; }
     .scroll-area::-webkit-scrollbar-thumb { background: var(--g2); border-radius: 2px; }
-
     /* ── Camera Grids ── */
     .grid-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
-    .grid-secondary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-
+    .grid-secondary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
     .cam-vp {
       position: relative; background: #060608; border-radius: var(--r); overflow: hidden;
       aspect-ratio: 16/9; border: 1px solid rgba(255,255,255,0.05);
@@ -669,7 +625,6 @@ class EngineeredLightingCard extends HTMLElement {
       border-color: rgba(255,255,255,0.08);
     }
     .cam-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-
     /* ── v11: Consistent scrim system ── */
     .scrim-top {
       position: absolute; top: 0; left: 0; right: 0; height: 60px; z-index: 3;
@@ -681,7 +636,6 @@ class EngineeredLightingCard extends HTMLElement {
       background: linear-gradient(0deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.25) 55%, transparent 100%);
       pointer-events: none;
     }
-
     /* ── Top overlay: label + pipeline (no status pill) ── */
     .ov-top {
       position: absolute; top: 0; left: 0; right: 0;
@@ -702,7 +656,6 @@ class EngineeredLightingCard extends HTMLElement {
     }
     .ov-pipe.pipe-on { opacity: 1; color: rgba(255,255,255,0.65); }
     .pipe-dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,0.6); animation: pulse 1.2s ease-in-out infinite; }
-
     /* ── Detection pills v11: softer, more integrated ── */
     .ov-detect {
       position: absolute; top: 32px; left: 0; right: 0; z-index: 5; pointer-events: none;
@@ -716,7 +669,6 @@ class EngineeredLightingCard extends HTMLElement {
       letter-spacing: 0.01em;
     }
     .dp-snd { font-style: italic; color: rgba(255,255,255,0.50); font-weight: 400; border-color: rgba(255,255,255,0.06); }
-
     /* ── V-JEPA Activity overlay v11: cleaner ── */
     .ov-activity {
       position: absolute; bottom: 26px; left: 0; right: 0; z-index: 5;
@@ -748,7 +700,6 @@ class EngineeredLightingCard extends HTMLElement {
     .sr-bar { flex: 1; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.06); overflow: hidden; }
     .sr-fill { height: 100%; border-radius: 1px; background: rgba(255,255,255,0.35); transition: width 0.4s var(--ease); }
     .sr-v { font-size: 9px; font-weight: 400; color: rgba(255,255,255,0.38); font-variant-numeric: tabular-nums; width: 26px; text-align: right; flex-shrink: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
-
     /* ── Bottom data strip v11: integrated into scrim ── */
     .ov-data {
       position: absolute; bottom: 0; left: 0; right: 0; z-index: 5;
@@ -760,7 +711,6 @@ class EngineeredLightingCard extends HTMLElement {
     .od-v { font-size: 10px; font-weight: 500; font-family: 'SF Mono','Menlo',monospace; color: rgba(255,255,255,0.58); font-variant-numeric: tabular-nums; }
     .od-sep { width: 1px; height: 8px; background: rgba(255,255,255,0.08); margin: 0 2px; }
     .od-ts { font-size: 8px; color: rgba(255,255,255,0.28); margin-left: auto; font-variant-numeric: tabular-nums; }
-
     /* ── Metrics pane v11: flex child at bottom, never overlaps HA sidebar ── */
     .metrics-pane {
       flex-shrink: 0; z-index: 20;
@@ -774,7 +724,6 @@ class EngineeredLightingCard extends HTMLElement {
       max-width: 1600px; margin: 0 auto;
       align-items: stretch;
     }
-
     /* ── Pipeline flow arrow ── */
     .mc-flow {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -790,7 +739,6 @@ class EngineeredLightingCard extends HTMLElement {
       animation: flowPulse 3s ease-in-out infinite;
     }
     @keyframes flowPulse { 0%,100%{opacity:.3} 50%{opacity:.7} }
-
     /* ── v11: Unified liquid glass pipeline card ── */
     .mc {
       background: rgba(14,14,18,0.72);
@@ -810,7 +758,6 @@ class EngineeredLightingCard extends HTMLElement {
         inset 0 0.5px 0 rgba(255,255,255,0.08),
         0 8px 36px rgba(0,0,0,0.45);
     }
-
     /* ── Stage header ── */
     .mc-stage {
       display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
@@ -837,9 +784,7 @@ class EngineeredLightingCard extends HTMLElement {
     }
     .mc-badge.badge-on { background: rgba(255,255,255,0.07); color: var(--t2); }
     .mc-badge.badge-warn { background: rgba(255,200,100,0.07); color: rgba(255,200,100,0.50); }
-
     .mc-body { display: flex; flex-direction: column; }
-
     /* ── v11: Hero metrics row — two side by side ── */
     .mc-hero-row {
       display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
@@ -854,12 +799,10 @@ class EngineeredLightingCard extends HTMLElement {
       font-size: 9px; font-weight: 400; color: var(--t4);
       text-transform: uppercase; letter-spacing: 0.08em; margin-top: 5px;
     }
-
     /* ── Divider ── */
     .mc-divider {
       height: 1px; background: rgba(255,255,255,0.04); margin-bottom: 12px;
     }
-
     /* ── v11: Metric grid — compact 2-col layout ── */
     .mc-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px;
@@ -877,7 +820,6 @@ class EngineeredLightingCard extends HTMLElement {
       font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums;
       color: var(--t2); min-width: 52px; text-align: right;
     }
-
     /* ── Model tag ── */
     .mc-model {
       margin-top: 10px; padding-top: 10px;
@@ -885,10 +827,8 @@ class EngineeredLightingCard extends HTMLElement {
       font-size: 9px; color: var(--t3); font-family: 'SF Mono','Menlo',monospace;
       letter-spacing: 0.3px; font-weight: 400;
     }
-
     @media (max-width: 1000px) {
       .metrics-grid { grid-template-columns: 1fr auto 1fr; }
-      .grid-secondary { grid-template-columns: repeat(2, 1fr); }
       .scroll-area { padding-bottom: 12px; }
     }
     @media (max-width: 600px) {
@@ -901,7 +841,6 @@ class EngineeredLightingCard extends HTMLElement {
     `;
   }
 }
-
 if (!customElements.get('engineered-lighting-card')) {
   customElements.define('engineered-lighting-card', EngineeredLightingCard);
 }
