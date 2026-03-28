@@ -1,10 +1,9 @@
 /**
- * Engineered Lighting Card v4
+ * Engineered Lighting Card v5
  * V-JEPA 2 World Model Dashboard
  *
- * Design: Apple Liquid Glass — every data point earns its place.
- * All V-JEPA 2 inference data surfaced. Frigate bounding boxes + audio.
- * Pipeline reflects real-time state. Uniform camera grid.
+ * Design: Apple — Clarity · Deference · Depth
+ * Calm, minimal, effortless. Every element earns its place.
  */
 class EngineeredLightingCard extends HTMLElement {
   constructor() {
@@ -58,13 +57,11 @@ class EngineeredLightingCard extends HTMLElement {
   }
 
   // ── Snapshot URLs ──
+  // No bbox=1 — Frigate bounding boxes cause flicker. Object detection rendered as HTML pills.
 
   _snapUrl(cam) {
-    // Try Frigate first (with bounding boxes), fall back to HA proxy
-    if (this._failedCams.has(cam.name)) {
-      return this._snapUrlHA(cam);
-    }
-    return `${this._config.frigate_url}/api/${cam.name}/latest.jpg?bbox=1&h=720&ts=${Date.now()}`;
+    if (this._failedCams.has(cam.name)) return this._snapUrlHA(cam);
+    return `${this._config.frigate_url}/api/${cam.name}/latest.jpg?h=720&ts=${Date.now()}`;
   }
 
   _snapUrlHA(cam) {
@@ -80,45 +77,34 @@ class EngineeredLightingCard extends HTMLElement {
     const objects = [
       'person','dog','cat','bottle','cup','bowl','chair','couch',
       'dining_table','cell_phone','laptop','tv','book','remote',
-      'potted_plant','oven','backpack','handbag','suitcase','clock'
+      'potted_plant','oven','backpack','handbag','suitcase','clock',
+      'car','truck','bicycle','motorcycle'
     ];
     return objects.filter(obj => {
-      const s = this._hass?.states[`binary_sensor.${camName}_${obj}_occupancy`];
+      let s = this._hass?.states[`binary_sensor.${camName}_${obj}_occupancy`];
+      if (s && s.state === 'on') return true;
+      s = this._hass?.states[`binary_sensor.whole_${camName}_${obj}_occupancy`];
       return s && s.state === 'on';
     });
   }
 
   _getDetectedSounds(camName) {
-    const sounds = [
-      'speech','music','bark','baby_crying','alarm',
-      'doorbell','fire_alarm','glass_breaking','knock','yelling'
-    ];
+    const sounds = ['speech','music','bark','baby_crying','alarm','doorbell','fire_alarm','glass_breaking','knock','yelling'];
     return sounds.filter(snd => {
       const s = this._hass?.states[`binary_sensor.${camName}_${snd}_sound`];
       return s && s.state === 'on';
     });
   }
 
-  _getObjectIcon(obj) {
-    const icons = {
-      person:'👤', dog:'🐕', cat:'🐈', bottle:'🍼', cup:'☕', bowl:'🥣',
-      chair:'🪑', couch:'🛋', dining_table:'🍽', cell_phone:'📱', laptop:'💻',
-      tv:'📺', book:'📖', remote:'🎮', potted_plant:'🌿', oven:'♨️',
-      backpack:'🎒', handbag:'👜', suitcase:'🧳', clock:'🕐'
-    };
-    return icons[obj] || '•';
-  }
-
   _getObjectLabel(obj) {
-    return obj.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  }
-
-  _getSoundIcon(snd) {
-    const icons = {
-      speech:'🗣', music:'🎵', bark:'🐕', baby_crying:'👶', alarm:'🚨',
-      doorbell:'🔔', fire_alarm:'🔥', glass_breaking:'💥', knock:'🚪', yelling:'📢'
+    const m = {
+      person:'Person', dog:'Dog', cat:'Cat', bottle:'Bottle', cup:'Cup', bowl:'Bowl',
+      chair:'Chair', couch:'Couch', dining_table:'Table', cell_phone:'Phone', laptop:'Laptop',
+      tv:'TV', book:'Book', remote:'Remote', potted_plant:'Plant', oven:'Oven',
+      backpack:'Backpack', handbag:'Bag', suitcase:'Suitcase', clock:'Clock',
+      car:'Car', truck:'Truck', bicycle:'Bike', motorcycle:'Moto'
     };
-    return icons[snd] || '🔊';
+    return m[obj] || obj.replace(/_/g, ' ');
   }
 
   _getSoundLabel(snd) {
@@ -135,16 +121,19 @@ class EngineeredLightingCard extends HTMLElement {
     return s ? s.state === 'on' : false;
   }
 
-  // ── Activity (V-JEPA 2) Helpers ──
+  // ── Activity (V-JEPA 2) ──
 
   _getActivity(camName) {
     const s = this._hass?.states[`sensor.${camName}_activity`];
     if (!s || s.state === 'unknown' || s.state === 'unavailable') return null;
     const a = s.attributes || {};
+    const actObj = (typeof a.activity === 'object' && a.activity !== null) ? a.activity : null;
     return {
       state: s.state,
-      activity: a.activity || s.state,
-      confidence: a.confidence !== undefined ? parseFloat(a.confidence) : null,
+      activity: actObj ? actObj.activity : (a.activity || s.state),
+      confidence: actObj ? actObj.activity_confidence : (a.activity_confidence || a.confidence || null),
+      secondary: actObj ? actObj.secondary_activity : (a.secondary_activity || null),
+      secondaryConf: actObj ? actObj.secondary_confidence : (a.secondary_confidence || 0),
       embed_change: a.embed_change !== undefined ? parseFloat(a.embed_change) : null,
       motion_level: a.motion_level !== undefined ? parseFloat(a.motion_level) : null,
       trend: a.trend !== undefined ? parseFloat(a.trend) : null,
@@ -154,37 +143,23 @@ class EngineeredLightingCard extends HTMLElement {
   }
 
   _isVjepaInferring(camName) {
-    // Only "inferring" when V-JEPA is actively processing — person detected or meaningful motion
     const act = this._getActivity(camName);
     if (!act) return false;
     return act.person_detected || (act.motion_level !== null && act.motion_level > 0.01);
   }
 
-  _activityColor(state) {
-    const m = {
-      high_activity: '#ff453a', moderate_activity: '#ff9f0a',
-      low_activity: '#0a84ff', idle: '#8b949e', empty: '#484f58'
-    };
-    return m[state] || '#8b949e';
-  }
-
   _activityLabel(state) {
-    return state ? state.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '—';
+    if (!state || state === 'idle' || state === 'Empty' || state === 'unknown') return null;
+    return state.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   }
 
   _formatTime(iso) {
-    if (!iso) return '—';
+    if (!iso) return '';
     const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ago`;
-  }
-
-  _trendArrow(trend) {
-    if (trend === null || trend === undefined) return '→';
-    if (trend > 0.001) return '↑';
-    if (trend < -0.001) return '↓';
-    return '→';
+    if (diff < 5) return 'now';
+    if (diff < 60) return `${diff}s`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+    return `${Math.floor(diff / 3600)}h`;
   }
 
   _tempClass(t) {
@@ -195,25 +170,26 @@ class EngineeredLightingCard extends HTMLElement {
 
   _render() {
     const cams = this._config.cameras;
+    // Fix: living_room camera feed actually shows driveway, and vice versa
+    const labelOverrides = { 'living_room': 'Driveway', 'driveway': 'Living Room' };
+
     this.shadowRoot.innerHTML = `
       <style>${this._css()}</style>
       <div class="root">
+
         <!-- Header -->
         <header class="hdr">
           <div class="hdr-left">
-            <div class="logo">EL</div>
-            <div>
-              <div class="hdr-title">Engineered Lighting</div>
-              <div class="hdr-sub">V-JEPA 2 World Model · Perception Pipeline</div>
-            </div>
+            <div class="hdr-title">Engineered Lighting</div>
+            <div class="hdr-sub">V-JEPA 2 · Perception Pipeline</div>
           </div>
           <div class="hdr-right">
-            <div class="hdr-stat" id="hdr-cams">
+            <div class="hdr-stat">
               <span class="hdr-stat-val" id="hdr-total-objects">0</span>
               <span class="hdr-stat-label">Objects</span>
             </div>
-            <div class="hdr-stat" id="hdr-detect">
-              <span class="hdr-stat-val" id="hdr-total-cams">5</span>
+            <div class="hdr-stat">
+              <span class="hdr-stat-val">5</span>
               <span class="hdr-stat-label">Cameras</span>
             </div>
             <div class="pill-status" id="pill-status">
@@ -222,131 +198,73 @@ class EngineeredLightingCard extends HTMLElement {
           </div>
         </header>
 
-        <!-- Camera Grid: uniform 5-up -->
+        <!-- Camera Grid: 3 primary (top) + 2 secondary (bottom, smaller) -->
         <div class="cam-grid">
-          ${cams.map((cam) => `
-          <div class="cam-cell" id="cell-${cam.name}">
+          ${cams.map((cam, i) => {
+            const displayLabel = labelOverrides[cam.name] || cam.label;
+            const sizeClass = i < 3 ? 'cam-primary' : 'cam-secondary';
+            return `
+          <div class="cam-cell ${sizeClass}" id="cell-${cam.name}">
             <div class="cam-viewport">
-              <img class="cam-img" id="img-${cam.name}" alt="${cam.label}" />
+              <img class="cam-img" id="img-${cam.name}" alt="${displayLabel}" />
 
-              <!-- Top bar: label + live + FPS -->
+              <!-- Top: label + status -->
               <div class="ov-top">
-                <span class="ov-label">${cam.label}</span>
-                <span class="ov-live"><span class="ov-live-dot"></span>LIVE</span>
-                <span class="ov-fps" id="fps-${cam.name}"></span>
+                <span class="ov-label">${displayLabel}</span>
+                <span class="ov-status" id="status-${cam.name}">Idle</span>
               </div>
 
-              <!-- Detection overlay: objects + sounds -->
+              <!-- Detection pills (HTML, no flicker) -->
               <div class="ov-detect" id="detect-${cam.name}"></div>
 
-              <!-- V-JEPA 2 full data overlay (bottom gradient) -->
+              <!-- V-JEPA 2 activity overlay -->
               <div class="ov-bottom" id="bottom-${cam.name}">
-                <!-- Row 1: Activity state + confidence -->
-                <div class="vj-row vj-row-primary">
-                  <span class="vj-activity-badge" id="vj-badge-${cam.name}">—</span>
+                <div class="vj-main">
+                  <span class="vj-activity" id="vj-act-${cam.name}"></span>
                   <span class="vj-conf" id="vj-conf-${cam.name}"></span>
-                  <span class="vj-person" id="vj-person-${cam.name}"></span>
-                  <span class="vj-timestamp" id="vj-ts-${cam.name}"></span>
+                  <span class="vj-time" id="vj-ts-${cam.name}"></span>
                 </div>
-
-                <!-- Row 2: V-JEPA 2 inference metrics -->
-                <div class="vj-row vj-row-data">
-                  <div class="vj-metric">
-                    <span class="vj-metric-label">Embed Δ</span>
-                    <span class="vj-metric-val mono" id="vj-embed-${cam.name}">0.0000</span>
-                  </div>
-                  <div class="vj-metric">
-                    <span class="vj-metric-label">Motion</span>
-                    <span class="vj-metric-val mono" id="vj-motion-val-${cam.name}">0.0000</span>
-                  </div>
-                  <div class="vj-metric">
-                    <span class="vj-metric-label">Trend</span>
-                    <span class="vj-metric-val mono" id="vj-trend-${cam.name}">0.0000 →</span>
-                  </div>
+                <div class="vj-data" id="vj-data-${cam.name}">
+                  <span class="vj-metric"><span class="vj-ml">Embed</span> <span class="vj-mv" id="vj-embed-${cam.name}">—</span></span>
+                  <span class="vj-metric"><span class="vj-ml">Motion</span> <span class="vj-mv" id="vj-motion-${cam.name}">—</span></span>
+                  <span class="vj-metric"><span class="vj-ml">Trend</span> <span class="vj-mv" id="vj-trend-${cam.name}">—</span></span>
                 </div>
-
-                <!-- Row 3: Frigate detection summary -->
-                <div class="vj-row vj-row-frigate">
-                  <span class="frigate-tag-label">FRIGATE</span>
-                  <span class="frigate-detect-summary" id="vj-frigate-${cam.name}">—</span>
-                  <span class="frigate-audio-summary" id="vj-audio-${cam.name}"></span>
-                </div>
-
-                <!-- Motion bar -->
-                <div class="motion-bar">
-                  <div class="motion-fill" id="motion-${cam.name}"></div>
-                </div>
+                <div class="vj-frigate" id="vj-fri-${cam.name}"></div>
               </div>
             </div>
-
-            <!-- Pipeline indicator -->
-            <div class="pipeline-bar" id="pipe-${cam.name}">
-              <div class="pipe-stage">
-                <span class="pipe-dot on"></span>
-                <span class="pipe-lbl">Camera</span>
-              </div>
-              <span class="pipe-arrow">→</span>
-              <div class="pipe-stage">
-                <span class="pipe-dot on"></span>
-                <span class="pipe-lbl">go2rtc</span>
-              </div>
-              <span class="pipe-arrow">→</span>
-              <div class="pipe-stage">
-                <span class="pipe-dot" id="pipe-fri-${cam.name}"></span>
-                <span class="pipe-lbl">Frigate</span>
-                <span class="pipe-detail" id="pipe-fri-d-${cam.name}"></span>
-              </div>
-              <span class="pipe-arrow" id="pipe-arr-vj-${cam.name}">→</span>
-              <div class="pipe-stage">
-                <span class="pipe-dot" id="pipe-vj-${cam.name}"></span>
-                <span class="pipe-lbl" id="pipe-vj-lbl-${cam.name}">V-JEPA 2</span>
-                <span class="pipe-detail" id="pipe-vj-d-${cam.name}"></span>
-              </div>
-              <span class="pipe-arrow">→</span>
-              <div class="pipe-stage">
-                <span class="pipe-dot" id="pipe-mqtt-${cam.name}"></span>
-                <span class="pipe-lbl">MQTT</span>
-              </div>
-              <span class="pipe-arrow">→</span>
-              <div class="pipe-stage">
-                <span class="pipe-dot on"></span>
-                <span class="pipe-lbl">HA</span>
-              </div>
-            </div>
-          </div>
-          `).join('')}
+          </div>`;
+          }).join('')}
         </div>
 
         <!-- System Metrics -->
-        <div class="metrics-grid">
+        <div class="metrics">
+
           <!-- Frigate NVR -->
           <div class="m-card">
             <div class="m-hdr">
-              <span class="m-icon m-icon-frigate">◈</span>
+              <div class="m-dot m-dot-blue"></div>
               <span class="m-title">Frigate NVR</span>
               <span class="m-badge" id="m-fri-badge">—</span>
             </div>
             <div class="m-body">
               <div class="m-row"><span class="m-label">CPU</span><div class="m-bar"><div class="m-bar-fill bar-blue" id="m-fri-cpu-bar"></div></div><span class="m-val" id="m-fri-cpu">—</span></div>
-              <div class="m-row"><span class="m-label">Memory</span><div class="m-bar"><div class="m-bar-fill bar-teal" id="m-fri-mem-bar"></div></div><span class="m-val" id="m-fri-mem">—</span></div>
+              <div class="m-row"><span class="m-label">Memory</span><div class="m-bar"><div class="m-bar-fill bar-blue" id="m-fri-mem-bar"></div></div><span class="m-val" id="m-fri-mem">—</span></div>
               <div class="m-row"><span class="m-label">Uptime</span><span class="m-val" id="m-fri-uptime">—</span></div>
               <div class="m-row"><span class="m-label">Detect</span><span class="m-val" id="m-fri-detect">—</span></div>
               <div class="m-row"><span class="m-label">Motion</span><span class="m-val" id="m-fri-motion">—</span></div>
-              <div class="m-row"><span class="m-label">Audio</span><span class="m-val" id="m-fri-audio">—</span></div>
             </div>
           </div>
 
           <!-- Coral TPU -->
           <div class="m-card">
             <div class="m-hdr">
-              <span class="m-icon m-icon-coral">▲</span>
+              <div class="m-dot m-dot-pink"></div>
               <span class="m-title">Coral TPU</span>
               <span class="m-badge" id="m-coral-badge">—</span>
             </div>
             <div class="m-body">
               <div class="m-row"><span class="m-label">Inference</span><span class="m-val" id="m-coral-speed">—</span></div>
               <div class="m-row"><span class="m-label">Temp</span><span class="m-val temp" id="m-coral-temp">—</span></div>
-              <div class="m-row"><span class="m-label">Detection</span><span class="m-val" id="m-coral-detect">—</span></div>
               <div class="m-row"><span class="m-label">PID</span><span class="m-val" id="m-coral-pid">—</span></div>
             </div>
           </div>
@@ -354,12 +272,12 @@ class EngineeredLightingCard extends HTMLElement {
           <!-- Jetson Orin Nano -->
           <div class="m-card">
             <div class="m-hdr">
-              <span class="m-icon m-icon-jetson">⬡</span>
+              <div class="m-dot m-dot-green"></div>
               <span class="m-title">Jetson Orin Nano</span>
-              <span class="m-badge" id="m-jet-badge">Offline</span>
+              <span class="m-badge" id="m-jet-badge">—</span>
             </div>
             <div class="m-body">
-              <div class="m-row"><span class="m-label">CPU</span><div class="m-bar"><div class="m-bar-fill bar-blue" id="m-jet-cpu-bar"></div></div><span class="m-val" id="m-jet-cpu">—</span></div>
+              <div class="m-row"><span class="m-label">CPU</span><div class="m-bar"><div class="m-bar-fill bar-green" id="m-jet-cpu-bar"></div></div><span class="m-val" id="m-jet-cpu">—</span></div>
               <div class="m-row"><span class="m-label">GPU</span><div class="m-bar"><div class="m-bar-fill bar-purple" id="m-jet-gpu-bar"></div></div><span class="m-val" id="m-jet-gpu">—</span></div>
               <div class="m-row"><span class="m-label">RAM</span><div class="m-bar"><div class="m-bar-fill bar-teal" id="m-jet-ram-bar"></div></div><span class="m-val" id="m-jet-ram">—</span></div>
               <div class="m-row"><span class="m-label">CPU Temp</span><span class="m-val temp" id="m-jet-ct">—</span></div>
@@ -367,12 +285,12 @@ class EngineeredLightingCard extends HTMLElement {
             </div>
           </div>
 
-          <!-- V-JEPA 2 Global -->
-          <div class="m-card">
+          <!-- V-JEPA 2 -->
+          <div class="m-card m-card-accent">
             <div class="m-hdr">
-              <span class="m-icon m-icon-vjepa">◉</span>
+              <div class="m-dot m-dot-teal"></div>
               <span class="m-title">V-JEPA 2</span>
-              <span class="m-badge" id="m-vj-badge">Offline</span>
+              <span class="m-badge" id="m-vj-badge">—</span>
             </div>
             <div class="m-body">
               <div class="m-row"><span class="m-label">Status</span><span class="m-val" id="m-vj-status">—</span></div>
@@ -381,6 +299,7 @@ class EngineeredLightingCard extends HTMLElement {
               <div class="m-row"><span class="m-label">Frames</span><span class="m-val" id="m-vj-frames">—</span></div>
               <div class="m-row"><span class="m-label">Active</span><span class="m-val" id="m-vj-cams">—</span></div>
               <div class="m-row"><span class="m-label">Inferring</span><span class="m-val" id="m-vj-inferring">—</span></div>
+              <div class="m-row m-row-model"><span class="m-model" id="m-vj-model">V-JEPA 2 ViT-L · FP16 · CUDA</span></div>
             </div>
           </div>
         </div>
@@ -406,17 +325,27 @@ class EngineeredLightingCard extends HTMLElement {
   // ── Polling ──
 
   _poll() {
-    // Refresh snapshots every 2s
+    // Refresh snapshots every 2s with pre-load to avoid flicker
     const t1 = setInterval(() => {
       this._config.cameras.forEach(cam => {
         const img = this.shadowRoot.getElementById(`img-${cam.name}`);
-        if (img) img.src = this._snapUrl(cam);
+        if (!img) return;
+        const url = this._snapUrl(cam);
+        const tmp = new Image();
+        tmp.onload = () => { img.src = url; };
+        tmp.onerror = () => {
+          if (!this._failedCams.has(cam.name)) {
+            this._failedCams.add(cam.name);
+            img.src = this._snapUrlHA(cam);
+          }
+        };
+        tmp.src = url;
       });
     }, 2000);
     // Fetch Frigate stats every 5s
     const t2 = setInterval(() => this._fetchFrigate(), 5000);
     this._timers.push(t1, t2);
-    // Initial loads
+    // Initial load
     this._config.cameras.forEach(cam => {
       const img = this.shadowRoot.getElementById(`img-${cam.name}`);
       if (img) img.src = this._snapUrl(cam);
@@ -436,182 +365,131 @@ class EngineeredLightingCard extends HTMLElement {
   _update() {
     if (!this._hass) return;
     let totalObjects = 0;
-    let inferringCount = 0;
     this._config.cameras.forEach(cam => {
       totalObjects += this._updateCamera(cam);
-      if (this._isVjepaInferring(cam.name)) inferringCount++;
     });
     this._updateMetrics();
-
-    // Header stats
     const te = this.shadowRoot.getElementById('hdr-total-objects');
     if (te) te.textContent = totalObjects;
+
+    // Header status pill
+    const vst = this._hass.states['sensor.v_jepa_2_status'];
+    const pill = this.shadowRoot.getElementById('pill-status');
+    if (pill) {
+      const on = vst?.state === 'running';
+      pill.innerHTML = `<span class="dot-pulse${on ? '' : ' off'}"></span>${on ? 'Active' : 'Offline'}`;
+      pill.className = 'pill-status' + (on ? '' : ' pill-off');
+    }
   }
 
   _updateCamera(cam) {
     const $ = id => this.shadowRoot.getElementById(id);
-    const h = this._hass;
     const fStats = this._frigateStats?.cameras?.[cam.name];
-
-    // ── V-JEPA 2 activity data ──
     const act = this._getActivity(cam.name);
-    const inferring = this._isVjepaInferring(cam.name);
 
-    // Activity badge
-    const badge = $(`vj-badge-${cam.name}`);
-    if (badge && act) {
-      badge.textContent = this._activityLabel(act.state);
-      badge.style.backgroundColor = this._activityColor(act.state);
-      badge.style.color = '#fff';
-    } else if (badge) {
-      badge.textContent = '—';
-      badge.style.backgroundColor = 'rgba(255,255,255,0.06)';
-      badge.style.color = '#8b949e';
+    // Status badge (top-right)
+    const statusEl = $(`status-${cam.name}`);
+    if (statusEl) {
+      if (act && act.person_detected) {
+        statusEl.textContent = 'Person';
+        statusEl.className = 'ov-status ov-status-person';
+      } else if (this._isMotionDetected(cam.name)) {
+        statusEl.textContent = 'Motion';
+        statusEl.className = 'ov-status ov-status-motion';
+      } else {
+        statusEl.textContent = 'Idle';
+        statusEl.className = 'ov-status';
+      }
+    }
+
+    // Activity label
+    const actEl = $(`vj-act-${cam.name}`);
+    if (actEl) {
+      const label = act ? this._activityLabel(act.activity) : null;
+      if (label && act.person_detected) {
+        actEl.textContent = label;
+        actEl.className = 'vj-activity vj-activity-on';
+      } else {
+        actEl.textContent = act?.person_detected ? 'Detected' : '';
+        actEl.className = 'vj-activity';
+      }
     }
 
     // Confidence
     const confEl = $(`vj-conf-${cam.name}`);
-    if (confEl && act && act.confidence !== null) {
-      const pct = (act.confidence * 100).toFixed(0);
-      confEl.textContent = `${pct}%`;
-      confEl.className = 'vj-conf ' + (act.confidence > 0.8 ? 'conf-hi' : act.confidence > 0.5 ? 'conf-md' : 'conf-lo');
-    } else if (confEl) {
-      confEl.textContent = '';
-    }
-
-    // Person detected
-    const personEl = $(`vj-person-${cam.name}`);
-    if (personEl) {
-      if (act && act.person_detected) {
-        personEl.textContent = '👤 Detected';
-        personEl.className = 'vj-person active';
+    if (confEl) {
+      if (act && act.confidence !== null && act.person_detected) {
+        const pct = typeof act.confidence === 'number'
+          ? (act.confidence > 1 ? act.confidence : act.confidence * 100) : 0;
+        confEl.textContent = `${pct.toFixed(0)}%`;
+        confEl.className = 'vj-conf' + (pct > 80 ? ' conf-hi' : pct > 50 ? ' conf-md' : ' conf-lo');
       } else {
-        personEl.textContent = '';
-        personEl.className = 'vj-person';
+        confEl.textContent = '';
       }
     }
 
     // Timestamp
     const tsEl = $(`vj-ts-${cam.name}`);
-    if (tsEl && act) {
-      tsEl.textContent = this._formatTime(act.timestamp);
-    }
+    if (tsEl) tsEl.textContent = act ? this._formatTime(act.timestamp) : '';
 
-    // Embed change
+    // Embed / Motion / Trend
     const embedEl = $(`vj-embed-${cam.name}`);
-    if (embedEl && act && act.embed_change !== null) {
-      embedEl.textContent = act.embed_change.toFixed(4);
-      embedEl.className = 'vj-metric-val mono' + (act.embed_change > 0.01 ? ' val-active' : '');
+    if (embedEl) {
+      if (act && act.embed_change !== null) {
+        embedEl.textContent = act.embed_change.toFixed(4);
+        embedEl.className = 'vj-mv' + (act.embed_change > 0.01 ? ' val-hi' : '');
+      } else { embedEl.textContent = '—'; embedEl.className = 'vj-mv'; }
     }
-
-    // Motion level
-    const motionValEl = $(`vj-motion-val-${cam.name}`);
-    if (motionValEl && act && act.motion_level !== null) {
-      motionValEl.textContent = act.motion_level.toFixed(4);
-      motionValEl.className = 'vj-metric-val mono' + (act.motion_level > 0.03 ? ' val-warn' : act.motion_level > 0.01 ? ' val-active' : '');
+    const motionEl = $(`vj-motion-${cam.name}`);
+    if (motionEl) {
+      if (act && act.motion_level !== null) {
+        motionEl.textContent = act.motion_level.toFixed(4);
+        motionEl.className = 'vj-mv' + (act.motion_level > 0.03 ? ' val-warn' : act.motion_level > 0.01 ? ' val-hi' : '');
+      } else { motionEl.textContent = '—'; motionEl.className = 'vj-mv'; }
     }
-
-    // Trend
     const trendEl = $(`vj-trend-${cam.name}`);
-    if (trendEl && act && act.trend !== null) {
-      trendEl.textContent = `${act.trend.toFixed(4)} ${this._trendArrow(act.trend)}`;
+    if (trendEl) {
+      if (act && act.trend !== null) {
+        const arrow = act.trend > 0.001 ? ' ↑' : act.trend < -0.001 ? ' ↓' : ' →';
+        trendEl.textContent = act.trend.toFixed(4) + arrow;
+      } else { trendEl.textContent = '—'; }
     }
 
-    // Motion bar
-    const motionBar = $(`motion-${cam.name}`);
-    if (motionBar && act && act.motion_level !== null) {
-      const pct = Math.min(100, act.motion_level * 100);
-      motionBar.style.width = pct + '%';
-      motionBar.className = 'motion-fill' + (pct > 30 ? ' motion-hi' : pct > 10 ? ' motion-md' : '');
+    // Fade data row when idle
+    const dataRow = $(`vj-data-${cam.name}`);
+    if (dataRow) dataRow.style.opacity = (act && act.person_detected) ? '1' : '0.35';
+
+    // Frigate per-cam stats
+    const friEl = $(`vj-fri-${cam.name}`);
+    if (friEl && fStats) {
+      const dfps = fStats.detection_fps || 0;
+      const cfps = fStats.camera_fps || 0;
+      friEl.textContent = dfps > 0 ? `${cfps.toFixed(0)} fps · ${dfps.toFixed(1)} det/s` : `${cfps.toFixed(0)} fps`;
+      friEl.className = 'vj-frigate' + (dfps > 0 ? ' vj-fri-active' : '');
     }
 
-    // ── Frigate detection overlay ──
+    // ── Detection pills (stable HTML, no flicker) ──
     const objects = this._getDetectedObjects(cam.name);
     const sounds = this._getDetectedSounds(cam.name);
     const detectEl = $(`detect-${cam.name}`);
-    let objectCount = objects.length;
-
     if (detectEl) {
       let html = '';
       objects.forEach(obj => {
         const cls = obj === 'person' ? 'det-person' : (obj === 'dog' || obj === 'cat') ? 'det-animal' : 'det-object';
-        html += `<span class="det-pill ${cls}">${this._getObjectIcon(obj)} ${this._getObjectLabel(obj)}</span>`;
+        html += `<span class="det-pill ${cls}">${this._getObjectLabel(obj)}</span>`;
       });
       sounds.forEach(snd => {
-        html += `<span class="det-pill det-sound">${this._getSoundIcon(snd)} ${this._getSoundLabel(snd)}</span>`;
+        html += `<span class="det-pill det-sound">${this._getSoundLabel(snd)}</span>`;
       });
-      // Motion indicator
-      if (this._isMotionDetected(cam.name)) {
-        html += `<span class="det-pill det-motion">◎ Motion</span>`;
-      }
       detectEl.innerHTML = html;
     }
 
-    // Frigate summary in bottom overlay
-    const frigSummary = $(`vj-frigate-${cam.name}`);
-    if (frigSummary && fStats) {
-      const dfps = fStats.detection_fps || 0;
-      const cfps = fStats.camera_fps || 0;
-      if (dfps > 0) {
-        frigSummary.textContent = `${dfps.toFixed(1)} det/s · ${cfps.toFixed(0)} fps`;
-        frigSummary.className = 'frigate-detect-summary active';
-      } else {
-        frigSummary.textContent = fStats.detection_enabled ? `Monitoring · ${cfps.toFixed(0)} fps` : 'Off';
-        frigSummary.className = 'frigate-detect-summary';
-      }
-    } else if (frigSummary) {
-      frigSummary.textContent = '—';
-    }
-
-    // Audio summary
-    const audioSummary = $(`vj-audio-${cam.name}`);
-    if (audioSummary) {
-      if (sounds.length > 0) {
-        audioSummary.textContent = `🔊 ${sounds.map(s => this._getSoundLabel(s)).join(', ')}`;
-        audioSummary.className = 'frigate-audio-summary active';
-      } else if (fStats && fStats.audio_dBFS !== undefined && fStats.audio_dBFS > -100) {
-        audioSummary.textContent = `${fStats.audio_dBFS.toFixed(0)} dBFS`;
-        audioSummary.className = 'frigate-audio-summary';
-      } else {
-        audioSummary.textContent = '';
-      }
-    }
-
-    // FPS in top bar
-    const fpsEl = $(`fps-${cam.name}`);
-    if (fpsEl && fStats) {
-      const fps = fStats.camera_fps || 0;
-      fpsEl.textContent = fps > 0 ? `${fps.toFixed(0)} fps` : '';
-    }
-
-    // ── Pipeline ──
-    const frigateOn = this._getSwitch(cam.name, 'detect');
-    const pipeFri = $(`pipe-fri-${cam.name}`);
-    const pipeFriD = $(`pipe-fri-d-${cam.name}`);
-    const pipeVj = $(`pipe-vj-${cam.name}`);
-    const pipeVjD = $(`pipe-vj-d-${cam.name}`);
-    const pipeVjLbl = $(`pipe-vj-lbl-${cam.name}`);
-    const pipeArrVj = $(`pipe-arr-vj-${cam.name}`);
-    const pipeMqtt = $(`pipe-mqtt-${cam.name}`);
-
-    if (pipeFri) pipeFri.className = 'pipe-dot' + (frigateOn ? ' on fri-on' : '');
-    if (pipeFriD) {
-      const dfps = fStats ? (fStats.detection_fps || 0) : 0;
-      pipeFriD.textContent = frigateOn ? (dfps > 0 ? `${dfps.toFixed(1)} d/s` : 'idle') : '';
-    }
-
-    // V-JEPA pipeline: only "inferring" when actually active
-    if (pipeVj) pipeVj.className = 'pipe-dot' + (inferring ? ' on vj-on pulse' : act ? ' on vj-idle' : '');
-    if (pipeVjD) pipeVjD.textContent = inferring ? 'inferring' : (act ? 'idle' : '');
-    if (pipeVjLbl) pipeVjLbl.textContent = 'V-JEPA 2';
-    if (pipeArrVj) pipeArrVj.className = 'pipe-arrow' + (inferring ? ' arrow-active' : '');
-    if (pipeMqtt) pipeMqtt.className = 'pipe-dot' + (act ? ' on mqtt-on' : '');
-
-    return objectCount;
+    return objects.length;
   }
 
   _updateMetrics() {
     const h = this._hass;
+    if (!h) return;
     const $ = id => this.shadowRoot.getElementById(id);
     const bar = (id, pct) => { const b = $(id); if (b) b.style.width = Math.min(100, pct || 0) + '%'; };
     const setVal = (id, v) => { const e = $(id); if (e) e.textContent = v; };
@@ -635,24 +513,19 @@ class EngineeredLightingCard extends HTMLElement {
         bar('m-fri-mem-bar', fs.mem);
       }
     }
-
-    // Frigate per-camera summary
-    let detectCount = 0, motionCount = 0, audioCount = 0;
+    let detectCount = 0, motionCount = 0;
     this._config.cameras.forEach(cam => {
       if (this._getSwitch(cam.name, 'detect')) detectCount++;
       if (this._getSwitch(cam.name, 'motion')) motionCount++;
-      if (this._getSwitch(cam.name, 'audio_detection')) audioCount++;
     });
     setVal('m-fri-detect', `${detectCount}/5 cams`);
     setVal('m-fri-motion', `${motionCount}/5 cams`);
-    setVal('m-fri-audio', `${audioCount}/5 cams`);
 
     // ── Coral TPU ──
     if (st.detectors) {
       const det = Object.values(st.detectors)[0];
       if (det) {
         setVal('m-coral-speed', (det.inference_speed || 0).toFixed(1) + ' ms');
-        setVal('m-coral-detect', det.detection_start ? det.detection_start.toFixed(1) + ' ms' : 'Idle');
         setVal('m-coral-pid', det.pid || '—');
         const be = $('m-coral-badge');
         if (be) { be.textContent = 'Online'; be.className = 'm-badge badge-on'; }
@@ -698,12 +571,9 @@ class EngineeredLightingCard extends HTMLElement {
         jetsonOnline = true;
         const e = $(eid);
         if (e) { e.textContent = s.state + '°C'; e.className = 'm-val temp ' + this._tempClass(parseFloat(s.state)); }
-      } else {
-        setVal(eid, '—');
-      }
+      } else { setVal(eid, '—'); }
     });
-    const jStatus = h.states['sensor.jetson_status'];
-    if ((jStatus && jStatus.state !== 'unavailable' && jStatus.state !== 'unknown') || jetsonOnline) {
+    if (jetsonOnline) {
       const be = $('m-jet-badge');
       if (be) { be.textContent = 'Online'; be.className = 'm-badge badge-on'; }
     }
@@ -722,14 +592,13 @@ class EngineeredLightingCard extends HTMLElement {
       if (s && s.state !== 'unavailable' && s.state !== 'unknown') {
         vjepaOnline = true;
         let v = s.state;
-        if (sid.includes('fps')) v += ' fps';
-        else if (sid.includes('latency')) v += ' ms';
+        if (sid.includes('fps')) v = parseFloat(v).toFixed(1) + ' fps';
+        else if (sid.includes('latency')) v = parseFloat(v).toFixed(0) + ' ms';
         else if (sid.includes('frames')) v = parseInt(v).toLocaleString();
+        else if (sid.includes('active')) v = v + '/5 cams';
         setVal(eid, v);
       }
     }
-
-    // Count cameras currently inferring
     let inferCount = 0;
     this._config.cameras.forEach(cam => { if (this._isVjepaInferring(cam.name)) inferCount++; });
     setVal('m-vj-inferring', `${inferCount}/5 cams`);
@@ -738,6 +607,12 @@ class EngineeredLightingCard extends HTMLElement {
       const be = $('m-vj-badge');
       if (be) { be.textContent = 'Online'; be.className = 'm-badge badge-on'; }
     }
+
+    const vStatus = h.states['sensor.v_jepa_2_status'];
+    const modelEl = $('m-vj-model');
+    if (modelEl && vStatus?.attributes) {
+      modelEl.textContent = `${vStatus.attributes.model || 'V-JEPA 2 ViT-L'} · ${vStatus.attributes.precision || 'FP16'} · CUDA`;
+    }
   }
 
   // ── CSS ──
@@ -745,31 +620,29 @@ class EngineeredLightingCard extends HTMLElement {
   _css() {
     return `
     :host {
-      /* Apple Liquid Glass palette */
-      --bg: #000000;
+      --bg: #000;
       --surface: #0c0c0e;
-      --surface-2: #141416;
-      --surface-3: #1c1c1e;
-      --glass: rgba(255,255,255,0.03);
-      --glass-border: rgba(255,255,255,0.06);
-      --glass-hover: rgba(255,255,255,0.05);
+      --surface-2: #161618;
+      --border: rgba(255,255,255,0.06);
+      --border-hover: rgba(255,255,255,0.10);
 
       --text: #f5f5f7;
-      --text-2: rgba(255,255,255,0.7);
-      --text-3: rgba(255,255,255,0.45);
-      --text-4: rgba(255,255,255,0.25);
+      --text-2: rgba(255,255,255,0.65);
+      --text-3: rgba(255,255,255,0.40);
+      --text-4: rgba(255,255,255,0.22);
 
-      --teal: #30d5c8;
       --blue: #0a84ff;
+      --teal: #30d5c8;
       --green: #30d158;
       --amber: #ffd60a;
-      --red: #ff453a;
       --orange: #ff9f0a;
+      --red: #ff453a;
       --purple: #bf5af2;
       --pink: #ff375f;
 
-      --r: 10px;
-      --r-sm: 6px;
+      --r: 12px;
+      --r-sm: 8px;
+      --ease: cubic-bezier(.25,.1,.25,1);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -780,270 +653,202 @@ class EngineeredLightingCard extends HTMLElement {
       color: var(--text);
       -webkit-font-smoothing: antialiased;
       min-height: 100vh;
+      padding: 12px;
+      display: flex; flex-direction: column; gap: 10px;
     }
 
     /* ── Header ── */
     .hdr {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 12px 20px;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 18px;
       background: var(--surface);
-      border-bottom: 1px solid var(--glass-border);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
     }
-    .hdr-left { display: flex; align-items: center; gap: 12px; }
-    .hdr-right { display: flex; align-items: center; gap: 16px; }
-    .logo {
-      width: 32px; height: 32px; border-radius: 8px;
-      background: linear-gradient(135deg, var(--teal) 0%, var(--blue) 100%);
-      display: flex; align-items: center; justify-content: center;
-      font: 800 12px/1 system-ui; color: #fff; letter-spacing: -0.5px;
-    }
-    .hdr-title { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
-    .hdr-sub { font-size: 11px; color: var(--text-3); margin-top: 1px; letter-spacing: -0.01em; }
-
+    .hdr-left { display: flex; flex-direction: column; gap: 2px; }
+    .hdr-right { display: flex; align-items: center; gap: 20px; }
+    .hdr-title { font-size: 17px; font-weight: 700; letter-spacing: -0.03em; }
+    .hdr-sub { font-size: 11px; color: var(--text-4); letter-spacing: -0.01em; }
     .hdr-stat { display: flex; flex-direction: column; align-items: center; }
-    .hdr-stat-val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
-    .hdr-stat-label { font-size: 9px; font-weight: 600; color: var(--text-4); text-transform: uppercase; letter-spacing: 0.5px; }
+    .hdr-stat-val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+    .hdr-stat-label { font-size: 9px; font-weight: 600; color: var(--text-4); text-transform: uppercase; letter-spacing: 0.6px; }
 
     .pill-status {
       display: flex; align-items: center; gap: 6px;
-      padding: 4px 12px; border-radius: 100px;
+      padding: 5px 14px; border-radius: 100px;
       background: rgba(48,209,88,0.08); border: 1px solid rgba(48,209,88,0.12);
       font-size: 11px; font-weight: 600; color: var(--green);
+      transition: all 0.3s var(--ease);
     }
+    .pill-status.pill-off { background: rgba(255,255,255,0.03); border-color: var(--border); color: var(--text-4); }
     .dot-pulse {
       width: 6px; height: 6px; border-radius: 50%; background: var(--green);
       animation: pulse 2s ease-in-out infinite;
     }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+    .dot-pulse.off { background: var(--text-4); animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-    /* ── Camera Grid: all 5 uniform ── */
+    /* ── Camera Grid ── */
     .cam-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 2px;
-      padding: 2px;
-    }
-    .cam-cell:nth-child(4),
-    .cam-cell:nth-child(5) {
-      grid-column: span 1;
+      gap: 8px;
     }
     @media (min-width: 900px) {
-      .cam-grid {
-        grid-template-columns: repeat(6, 1fr);
-      }
-      .cam-cell:nth-child(1),
-      .cam-cell:nth-child(2),
-      .cam-cell:nth-child(3) { grid-column: span 2; }
-      .cam-cell:nth-child(4) { grid-column: 1 / 4; }
-      .cam-cell:nth-child(5) { grid-column: 4 / 7; }
+      .cam-grid { grid-template-columns: repeat(6, 1fr); }
+      .cam-cell.cam-primary { grid-column: span 2; }
+      .cam-cell.cam-secondary:nth-child(4) { grid-column: 2 / 4; }
+      .cam-cell.cam-secondary:nth-child(5) { grid-column: 4 / 6; }
     }
 
     .cam-viewport {
-      position: relative;
-      background: var(--surface);
-      border-radius: var(--r);
-      overflow: hidden;
+      position: relative; background: var(--surface);
+      border-radius: var(--r); overflow: hidden;
       aspect-ratio: 16/9;
+      border: 1px solid var(--border);
+      transition: border-color 0.3s var(--ease);
     }
-    .cam-img {
-      width: 100%; height: 100%;
-      object-fit: cover; display: block;
-    }
+    .cam-viewport:hover { border-color: var(--border-hover); }
+    .cam-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-    /* ── Top overlay ── */
+    /* Camera overlays */
     .ov-top {
       position: absolute; top: 0; left: 0; right: 0;
       display: flex; align-items: center; gap: 8px;
-      padding: 8px 10px;
-      background: linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, transparent 100%);
+      padding: 10px 12px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.65) 0%, transparent 100%);
       z-index: 3;
     }
-    .ov-label { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; text-shadow: 0 1px 4px rgba(0,0,0,0.9); }
-    .ov-live {
-      display: flex; align-items: center; gap: 4px;
-      font-size: 9px; font-weight: 800; letter-spacing: 0.5px;
-      padding: 2px 7px; border-radius: 4px;
-      background: rgba(255,55,95,0.85);
+    .ov-label {
+      font-size: 13px; font-weight: 650; letter-spacing: -0.01em;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.9);
     }
-    .ov-live-dot { width: 5px; height: 5px; border-radius: 50%; background: #fff; animation: pulse 1.2s infinite; }
-    .ov-fps { margin-left: auto; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .ov-status {
+      margin-left: auto;
+      font-size: 10px; font-weight: 600;
+      padding: 2px 10px; border-radius: 100px;
+      background: rgba(255,255,255,0.08);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      color: var(--text-3);
+      transition: all 0.3s var(--ease);
+    }
+    .ov-status-person { background: rgba(48,209,88,0.18); color: var(--green); }
+    .ov-status-motion { background: rgba(48,213,200,0.15); color: var(--teal); }
 
-    /* ── Detection overlay (mid-frame) ── */
+    /* Detection pills */
     .ov-detect {
-      position: absolute; top: 34px; left: 0; right: 0;
+      position: absolute; top: 36px; left: 0; right: 0;
       z-index: 2; pointer-events: none;
       display: flex; flex-wrap: wrap; gap: 4px;
-      padding: 4px 8px;
+      padding: 4px 10px;
     }
     .det-pill {
-      display: inline-flex; align-items: center; gap: 3px;
-      padding: 2px 8px; border-radius: 100px;
+      display: inline-flex; align-items: center;
+      padding: 3px 9px; border-radius: 100px;
       font-size: 10px; font-weight: 600;
       backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      transition: opacity 0.3s var(--ease);
     }
-    .det-person {
-      background: rgba(48,209,88,0.2); border: 1px solid rgba(48,209,88,0.35);
-      color: var(--green);
-    }
-    .det-animal {
-      background: rgba(255,159,10,0.2); border: 1px solid rgba(255,159,10,0.35);
-      color: var(--orange);
-    }
-    .det-object {
-      background: rgba(10,132,255,0.2); border: 1px solid rgba(10,132,255,0.35);
-      color: var(--blue);
-    }
-    .det-sound {
-      background: rgba(191,90,242,0.2); border: 1px solid rgba(191,90,242,0.35);
-      color: var(--purple);
-    }
-    .det-motion {
-      background: rgba(48,213,200,0.15); border: 1px solid rgba(48,213,200,0.3);
-      color: var(--teal);
-    }
+    .det-person { background: rgba(48,209,88,0.18); border: 1px solid rgba(48,209,88,0.25); color: var(--green); }
+    .det-animal { background: rgba(255,159,10,0.18); border: 1px solid rgba(255,159,10,0.25); color: var(--orange); }
+    .det-object { background: rgba(10,132,255,0.18); border: 1px solid rgba(10,132,255,0.25); color: var(--blue); }
+    .det-sound { background: rgba(191,90,242,0.18); border: 1px solid rgba(191,90,242,0.25); color: var(--purple); }
 
-    /* ── Bottom overlay: V-JEPA 2 data ── */
+    /* V-JEPA bottom overlay */
     .ov-bottom {
       position: absolute; bottom: 0; left: 0; right: 0;
-      padding: 10px 10px 6px;
-      background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.6) 60%, transparent 100%);
+      padding: 16px 12px 8px;
+      background: linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.45) 65%, transparent 100%);
       z-index: 3;
       display: flex; flex-direction: column; gap: 4px;
     }
-
-    .vj-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-
-    .vj-row-primary { gap: 8px; }
-    .vj-activity-badge {
-      padding: 2px 10px; border-radius: 100px;
-      font-size: 10px; font-weight: 700;
-      background: rgba(255,255,255,0.06); color: var(--text-3);
-      transition: all 0.3s ease;
+    .vj-main { display: flex; align-items: baseline; gap: 8px; }
+    .vj-activity {
+      font-size: 13px; font-weight: 600; color: var(--text-3);
+      transition: all 0.3s var(--ease);
     }
-    .vj-conf { font-size: 10px; font-weight: 700; }
+    .vj-activity-on { color: var(--text); }
+    .vj-conf { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .conf-hi { color: var(--green); }
     .conf-md { color: var(--amber); }
     .conf-lo { color: var(--red); }
-    .vj-person { font-size: 10px; font-weight: 700; color: var(--text-4); }
-    .vj-person.active { color: var(--green); text-shadow: 0 0 8px rgba(48,209,88,0.4); }
-    .vj-timestamp { font-size: 9px; color: var(--text-4); margin-left: auto; font-variant-numeric: tabular-nums; }
+    .vj-time { font-size: 9px; color: var(--text-4); margin-left: auto; font-variant-numeric: tabular-nums; }
 
-    .vj-row-data { gap: 12px; }
+    .vj-data {
+      display: flex; gap: 14px;
+      transition: opacity 0.4s var(--ease);
+    }
     .vj-metric { display: flex; align-items: center; gap: 4px; }
-    .vj-metric-label { font-size: 9px; font-weight: 600; color: var(--text-4); text-transform: uppercase; letter-spacing: 0.3px; }
-    .vj-metric-val { font-size: 10px; font-weight: 600; color: var(--text-3); }
-    .vj-metric-val.val-active { color: var(--teal); }
-    .vj-metric-val.val-warn { color: var(--amber); }
-    .mono { font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace; font-size: 10px; }
+    .vj-ml { font-size: 9px; font-weight: 600; color: var(--text-4); text-transform: uppercase; letter-spacing: 0.3px; }
+    .vj-mv {
+      font-size: 10px; font-weight: 600;
+      font-family: 'SF Mono', 'Menlo', 'Cascadia Code', monospace;
+      color: var(--text-3); font-variant-numeric: tabular-nums;
+      transition: color 0.3s var(--ease);
+    }
+    .vj-mv.val-hi { color: var(--teal); }
+    .vj-mv.val-warn { color: var(--amber); }
 
-    .vj-row-frigate { gap: 6px; }
-    .frigate-tag-label {
-      font-size: 8px; font-weight: 800; letter-spacing: 0.5px;
-      color: rgba(10,132,255,0.6);
-    }
-    .frigate-detect-summary { font-size: 10px; font-weight: 600; color: var(--text-4); }
-    .frigate-detect-summary.active { color: var(--blue); }
-    .frigate-audio-summary { font-size: 10px; font-weight: 600; color: var(--text-4); margin-left: auto; }
-    .frigate-audio-summary.active { color: var(--purple); }
+    .vj-frigate { font-size: 9px; font-weight: 600; color: var(--text-4); font-variant-numeric: tabular-nums; }
+    .vj-fri-active { color: var(--text-3); }
 
-    .motion-bar {
-      height: 2px; background: rgba(255,255,255,0.04); border-radius: 1px;
-      overflow: hidden; margin-top: 2px;
-    }
-    .motion-fill {
-      height: 100%; border-radius: 1px;
-      background: var(--teal); transition: width 0.6s ease;
-      width: 0%;
-    }
-    .motion-fill.motion-md { background: var(--amber); }
-    .motion-fill.motion-hi { background: var(--red); }
-
-    /* ── Pipeline Bar ── */
-    .pipeline-bar {
-      display: flex; align-items: center; gap: 3px;
-      padding: 5px 10px;
-      background: var(--surface);
-      border-radius: 0 0 var(--r) var(--r);
-      border-top: 1px solid var(--glass-border);
-      margin-top: -1px;
-    }
-    .pipe-stage { display: flex; align-items: center; gap: 3px; }
-    .pipe-dot {
-      width: 6px; height: 6px; border-radius: 50%;
-      background: var(--text-4); transition: all 0.3s;
-      flex-shrink: 0;
-    }
-    .pipe-dot.on { background: var(--green); box-shadow: 0 0 4px rgba(48,209,88,0.3); }
-    .pipe-dot.fri-on { background: var(--blue); box-shadow: 0 0 4px rgba(10,132,255,0.3); }
-    .pipe-dot.vj-on { background: var(--teal); box-shadow: 0 0 6px rgba(48,213,200,0.4); }
-    .pipe-dot.vj-idle { background: var(--text-4); box-shadow: none; }
-    .pipe-dot.mqtt-on { background: var(--purple); box-shadow: 0 0 4px rgba(191,90,242,0.3); }
-    .pipe-dot.pulse { animation: dotpulse 1.5s infinite; }
-    @keyframes dotpulse { 0%,100%{box-shadow:0 0 4px rgba(48,213,200,.3)} 50%{box-shadow:0 0 12px rgba(48,213,200,.7)} }
-    .pipe-lbl { font-size: 9px; color: var(--text-4); font-weight: 600; }
-    .pipe-detail { font-size: 8px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-    .pipe-arrow { font-size: 9px; color: var(--text-4); margin: 0 1px; transition: color 0.3s; }
-    .pipe-arrow.arrow-active { color: var(--teal); }
-
-    /* ── Metrics Grid ── */
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 2px;
-      padding: 2px;
-      margin-top: 2px;
+    /* ── Metrics ── */
+    .metrics {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
     }
     .m-card {
       background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: var(--r);
-      padding: 12px 14px;
-      border: 1px solid var(--glass-border);
+      padding: 14px 16px;
+      transition: border-color 0.3s var(--ease);
     }
-    .m-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-    .m-icon {
-      width: 22px; height: 22px; border-radius: 6px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 11px;
-    }
-    .m-icon-frigate { background: rgba(10,132,255,0.1); color: var(--blue); }
-    .m-icon-coral { background: rgba(255,55,95,0.1); color: var(--pink); }
-    .m-icon-jetson { background: rgba(48,209,88,0.1); color: var(--green); }
-    .m-icon-vjepa { background: rgba(48,213,200,0.1); color: var(--teal); }
+    .m-card:hover { border-color: var(--border-hover); }
+    .m-card-accent { border-color: rgba(48,213,200,0.12); }
+    .m-card-accent:hover { border-color: rgba(48,213,200,0.2); }
+
+    .m-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .m-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .m-dot-blue { background: var(--blue); }
+    .m-dot-pink { background: var(--pink); }
+    .m-dot-green { background: var(--green); }
+    .m-dot-teal { background: var(--teal); }
     .m-title { font-size: 12px; font-weight: 700; flex: 1; letter-spacing: -0.01em; }
     .m-badge {
-      font-size: 9px; font-weight: 700; padding: 2px 8px;
-      border-radius: 100px;
+      font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 100px;
       background: rgba(255,255,255,0.04); color: var(--text-4);
     }
     .m-badge.badge-on { background: rgba(48,209,88,0.1); color: var(--green); }
-    .m-body { display: flex; flex-direction: column; gap: 6px; }
+
+    .m-body { display: flex; flex-direction: column; gap: 7px; }
     .m-row { display: flex; align-items: center; gap: 8px; }
-    .m-label { font-size: 10px; color: var(--text-4); width: 60px; flex-shrink: 0; font-weight: 500; }
-    .m-bar { flex: 1; height: 3px; background: rgba(255,255,255,0.04); border-radius: 2px; overflow: hidden; }
-    .m-bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; width: 0%; }
+    .m-row-model { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+    .m-label { font-size: 10px; color: var(--text-4); width: 56px; flex-shrink: 0; font-weight: 500; }
+    .m-bar { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.04); overflow: hidden; }
+    .m-bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s var(--ease); width: 0%; }
     .bar-blue { background: var(--blue); }
     .bar-teal { background: var(--teal); }
-    .bar-purple { background: var(--purple); }
     .bar-green { background: var(--green); }
+    .bar-purple { background: var(--purple); }
     .m-val {
       font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums;
-      color: var(--text-2); min-width: 50px; text-align: right;
+      color: var(--text-2); min-width: 54px; text-align: right;
     }
     .m-val.temp.temp-cool { color: var(--green); }
     .m-val.temp.temp-warm { color: var(--amber); }
     .m-val.temp.temp-hot { color: var(--red); }
+    .m-model { font-size: 9px; color: var(--text-4); font-family: 'SF Mono', 'Menlo', monospace; letter-spacing: 0.2px; }
 
     /* ── Responsive ── */
     @media (max-width: 900px) {
       .cam-grid { grid-template-columns: repeat(2, 1fr); }
-      .cam-cell:nth-child(5) { grid-column: 1 / -1; }
-      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+      .cam-cell.cam-primary:first-child { grid-column: 1 / -1; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
     }
     @media (max-width: 600px) {
       .cam-grid { grid-template-columns: 1fr; }
-      .metrics-grid { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: 1fr; }
+      .root { padding: 8px; gap: 6px; }
     }
     `;
   }
@@ -1056,5 +861,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'engineered-lighting-card',
   name: 'Engineered Lighting',
-  description: 'V-JEPA 2 World Model Dashboard v4'
+  description: 'V-JEPA 2 World Model Dashboard v5'
 });
