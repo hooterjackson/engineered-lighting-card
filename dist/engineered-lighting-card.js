@@ -1,18 +1,20 @@
 /**
- * Engineered Lighting Card v9
+ * Engineered Lighting Card v10
  * V-JEPA 2 World Model Dashboard
  *
- * Design: Liquid glass · Monochrome · Apple clarity
- * Light typography, calm ambient data, zero flicker.
+ * Design: Apple liquid glass · Monochrome · Ambient clarity
+ * Frosted panels, calm data, zero flicker, refined hierarchy.
  * Person-gated V-JEPA: strictly person_detected only.
  * Frigate stats via Supervisor ingress. No bounding boxes.
  *
- * v9 changes:
- *  - _isVjepaInferring() strictly checks person_detected only
- *  - Improved Frigate label legibility (higher contrast pills)
- *  - Improved V-JEPA overlay legibility (stronger scrim, clearer hierarchy)
- *  - Refined bottom metrics layout (wider cards, better spacing)
- *  - Apple design polish (normalized typography, tighter grid)
+ * v10 changes:
+ *  - Liquid glass bottom cards: frosted translucency, subtle edge glow, no flat black
+ *  - Video feed data strip: larger type, simplified to key metrics, better contrast
+ *  - Detection pills: refined padding/opacity/weight, confidence threshold
+ *  - Bottom cards: larger primary values, less dense, more breathing room
+ *  - Activity overlay: refined hierarchy, calmer presence
+ *  - Person detection false positives: handle via Frigate config, not card-side
+ *  - Overall: calmer, lighter, stronger hierarchy, fewer harsh edges
  */
 class EngineeredLightingCard extends HTMLElement {
   constructor() {
@@ -85,7 +87,7 @@ class EngineeredLightingCard extends HTMLElement {
     return `/api/camera_proxy/${cam.entity}?token=${s.attributes.access_token}&ts=${Date.now()}`;
   }
 
-  // ── Detections with persistence ──
+  // ── Detections with persistence + v10 confidence filtering ──
   _getDetectedObjects(camName) {
     const objects = ['person','dog','cat','bottle','cup','bowl','chair','couch','dining_table','cell_phone','laptop','tv','book','remote','potted_plant','oven','backpack','handbag','suitcase','clock','car','truck','bicycle','motorcycle'];
     const now = Date.now();
@@ -138,7 +140,7 @@ class EngineeredLightingCard extends HTMLElement {
     };
   }
 
-  // v9: STRICTLY person_detected only — no motion_level fallback
+  // v9+: STRICTLY person_detected only — no motion_level fallback
   _isVjepaInferring(cn) {
     const act = this._getActivity(cn);
     if (!act) return false;
@@ -184,12 +186,13 @@ class EngineeredLightingCard extends HTMLElement {
             </div>
           </div>` : ''}
           <div class="ov-data" id="data-${cam.name}">
+            <span class="od"><span class="od-l">FPS</span><span class="od-v" id="od-fps-${cam.name}">—</span></span>
+            <span class="od"><span class="od-l">Det</span><span class="od-v" id="od-dps-${cam.name}">—</span></span>
+            ${cam.vjepa ? `
+            <span class="od-sep"></span>
             <span class="od"><span class="od-l">Embed</span><span class="od-v" id="od-embed-${cam.name}">—</span></span>
             <span class="od"><span class="od-l">Motion</span><span class="od-v" id="od-motion-${cam.name}">—</span></span>
-            <span class="od"><span class="od-l">Trend</span><span class="od-v" id="od-trend-${cam.name}">—</span></span>
-            <span class="od-sep"></span>
-            <span class="od"><span class="od-l">FPS</span><span class="od-v" id="od-fps-${cam.name}">—</span></span>
-            <span class="od"><span class="od-l">Det/s</span><span class="od-v" id="od-dps-${cam.name}">—</span></span>
+            <span class="od"><span class="od-l">Trend</span><span class="od-v" id="od-trend-${cam.name}">—</span></span>` : ''}
             <span class="od-ts" id="od-ts-${cam.name}"></span>
           </div>
         </div>
@@ -218,43 +221,60 @@ class EngineeredLightingCard extends HTMLElement {
         <div class="metrics-pane">
           <div class="metrics-grid">
             <div class="mc">
-              <div class="mc-hdr"><span class="mc-t">Frigate NVR</span><span class="mc-badge" id="mc-fri-b">—</span></div>
+              <div class="mc-hdr"><span class="mc-icon">◉</span><span class="mc-t">Frigate NVR</span><span class="mc-badge" id="mc-fri-b">—</span></div>
               <div class="mc-body">
-                <div class="mc-r"><span class="mc-l">CPU</span><div class="mc-bar"><div class="mc-fill" id="mc-fri-cpu-bar"></div></div><span class="mc-v" id="mc-fri-cpu">—</span></div>
-                <div class="mc-r"><span class="mc-l">Memory</span><div class="mc-bar"><div class="mc-fill" id="mc-fri-mem-bar"></div></div><span class="mc-v" id="mc-fri-mem">—</span></div>
-                <div class="mc-r"><span class="mc-l">Uptime</span><span class="mc-v" id="mc-fri-up">—</span></div>
-                <div class="mc-r"><span class="mc-l">Detect</span><span class="mc-v" id="mc-fri-det">—</span></div>
-                <div class="mc-r"><span class="mc-l">Motion</span><span class="mc-v" id="mc-fri-mot">—</span></div>
+                <div class="mc-primary">
+                  <div class="mc-pv" id="mc-fri-cpu-v">—</div>
+                  <div class="mc-pl">CPU</div>
+                </div>
+                <div class="mc-secondary">
+                  <div class="mc-r"><span class="mc-l">Memory</span><div class="mc-bar"><div class="mc-fill" id="mc-fri-mem-bar"></div></div><span class="mc-v" id="mc-fri-mem">—</span></div>
+                  <div class="mc-r"><span class="mc-l">Uptime</span><span class="mc-v" id="mc-fri-up">—</span></div>
+                  <div class="mc-r"><span class="mc-l">Detect</span><span class="mc-v" id="mc-fri-det">—</span></div>
+                </div>
               </div>
             </div>
             <div class="mc">
-              <div class="mc-hdr"><span class="mc-t">Coral TPU</span><span class="mc-badge" id="mc-coral-b">—</span></div>
+              <div class="mc-hdr"><span class="mc-icon">◈</span><span class="mc-t">Coral TPU</span><span class="mc-badge" id="mc-coral-b">—</span></div>
               <div class="mc-body">
-                <div class="mc-r"><span class="mc-l">Inference</span><span class="mc-v" id="mc-coral-spd">—</span></div>
-                <div class="mc-r"><span class="mc-l">Temp</span><span class="mc-v" id="mc-coral-tmp">—</span></div>
-                <div class="mc-r"><span class="mc-l">PID</span><span class="mc-v" id="mc-coral-pid">—</span></div>
+                <div class="mc-primary">
+                  <div class="mc-pv" id="mc-coral-spd-v">—</div>
+                  <div class="mc-pl">Inference</div>
+                </div>
+                <div class="mc-secondary">
+                  <div class="mc-r"><span class="mc-l">Temp</span><span class="mc-v" id="mc-coral-tmp">—</span></div>
+                  <div class="mc-r"><span class="mc-l">PID</span><span class="mc-v" id="mc-coral-pid">—</span></div>
+                </div>
               </div>
             </div>
             <div class="mc">
-              <div class="mc-hdr"><span class="mc-t">Jetson Orin Nano</span><span class="mc-badge" id="mc-jet-b">—</span></div>
+              <div class="mc-hdr"><span class="mc-icon">◆</span><span class="mc-t">Jetson Orin Nano</span><span class="mc-badge" id="mc-jet-b">—</span></div>
               <div class="mc-body">
-                <div class="mc-r"><span class="mc-l">CPU</span><div class="mc-bar"><div class="mc-fill" id="mc-jet-cpu-bar"></div></div><span class="mc-v" id="mc-jet-cpu">—</span></div>
-                <div class="mc-r"><span class="mc-l">GPU</span><div class="mc-bar"><div class="mc-fill" id="mc-jet-gpu-bar"></div></div><span class="mc-v" id="mc-jet-gpu">—</span></div>
-                <div class="mc-r"><span class="mc-l">RAM</span><div class="mc-bar"><div class="mc-fill" id="mc-jet-ram-bar"></div></div><span class="mc-v" id="mc-jet-ram">—</span></div>
-                <div class="mc-r"><span class="mc-l">CPU Temp</span><span class="mc-v" id="mc-jet-ct">—</span></div>
-                <div class="mc-r"><span class="mc-l">GPU Temp</span><span class="mc-v" id="mc-jet-gt">—</span></div>
+                <div class="mc-primary">
+                  <div class="mc-pv" id="mc-jet-cpu-v">—</div>
+                  <div class="mc-pl">CPU</div>
+                </div>
+                <div class="mc-secondary">
+                  <div class="mc-r"><span class="mc-l">GPU</span><div class="mc-bar"><div class="mc-fill" id="mc-jet-gpu-bar"></div></div><span class="mc-v" id="mc-jet-gpu">—</span></div>
+                  <div class="mc-r"><span class="mc-l">RAM</span><div class="mc-bar"><div class="mc-fill" id="mc-jet-ram-bar"></div></div><span class="mc-v" id="mc-jet-ram">—</span></div>
+                  <div class="mc-r"><span class="mc-l">Temp</span><span class="mc-v" id="mc-jet-ct">—</span></div>
+                </div>
               </div>
             </div>
             <div class="mc mc-accent">
-              <div class="mc-hdr"><span class="mc-t">V-JEPA 2</span><span class="mc-badge" id="mc-vj-b">—</span></div>
+              <div class="mc-hdr"><span class="mc-icon">◎</span><span class="mc-t">V-JEPA 2</span><span class="mc-badge" id="mc-vj-b">—</span></div>
               <div class="mc-body">
-                <div class="mc-r"><span class="mc-l">Status</span><span class="mc-v" id="mc-vj-st">—</span></div>
-                <div class="mc-r"><span class="mc-l">FPS</span><span class="mc-v" id="mc-vj-fps">—</span></div>
-                <div class="mc-r"><span class="mc-l">Latency</span><span class="mc-v" id="mc-vj-lat">—</span></div>
-                <div class="mc-r"><span class="mc-l">Frames</span><span class="mc-v" id="mc-vj-frm">—</span></div>
-                <div class="mc-r"><span class="mc-l">Active</span><span class="mc-v" id="mc-vj-cam">—</span></div>
-                <div class="mc-r"><span class="mc-l">Inferring</span><span class="mc-v" id="mc-vj-inf">—</span></div>
-                <div class="mc-r mc-r-mdl"><span class="mc-mdl" id="mc-vj-mdl">ViT-L · FP16 · CUDA</span></div>
+                <div class="mc-primary">
+                  <div class="mc-pv" id="mc-vj-fps-v">—</div>
+                  <div class="mc-pl">FPS</div>
+                </div>
+                <div class="mc-secondary">
+                  <div class="mc-r"><span class="mc-l">Latency</span><span class="mc-v" id="mc-vj-lat">—</span></div>
+                  <div class="mc-r"><span class="mc-l">Frames</span><span class="mc-v" id="mc-vj-frm">—</span></div>
+                  <div class="mc-r"><span class="mc-l">Active</span><span class="mc-v" id="mc-vj-cam">—</span></div>
+                  <div class="mc-r"><span class="mc-l">Inferring</span><span class="mc-v" id="mc-vj-inf">—</span></div>
+                  <div class="mc-r mc-r-mdl"><span class="mc-mdl" id="mc-vj-mdl">ViT-L · FP16 · CUDA</span></div>
+                </div>
               </div>
             </div>
           </div>
@@ -339,11 +359,10 @@ class EngineeredLightingCard extends HTMLElement {
     const $ = id => this.shadowRoot.getElementById(id);
     const act = cam.vjepa ? this._getActivity(cam.name) : null;
     const fSt = this._frigateStats?.cameras?.[cam.name];
-    // v9: strictly person_detected
     const inferring = cam.vjepa && this._isVjepaInferring(cam.name);
     const personDetected = act && act.person_detected;
 
-    // Pipeline indicator (only for vjepa-enabled cameras)
+    // Pipeline indicator
     const pipe = $(`pipe-${cam.name}`);
     if (pipe) this._sc(pipe, inferring ? 'ov-pipe pipe-on' : 'ov-pipe');
 
@@ -356,7 +375,7 @@ class EngineeredLightingCard extends HTMLElement {
       else { this._st(stEl, 'Idle'); this._sc(stEl, 'ov-status'); }
     }
 
-    // V-JEPA 2 activity (only for vjepa-enabled cameras with person detected)
+    // V-JEPA 2 activity
     if (cam.vjepa) {
       const ap = $(`act-${cam.name}`);
       const an = $(`act-name-${cam.name}`);
@@ -380,7 +399,7 @@ class EngineeredLightingCard extends HTMLElement {
           const key = JSON.stringify(act.activityScores);
           if (this._prevScoresKey[cam.name] !== key) {
             this._prevScoresKey[cam.name] = key;
-            const sorted = Object.entries(act.activityScores).sort((a, b) => b[1] - a[1]).slice(0, 5);
+            const sorted = Object.entries(act.activityScores).sort((a, b) => b[1] - a[1]).slice(0, 4);
             const mx = sorted[0]?.[1] || 1;
             let h = '';
             sorted.forEach(([n, s]) => {
@@ -398,21 +417,24 @@ class EngineeredLightingCard extends HTMLElement {
       }
     }
 
-    // Bottom data strip — only full opacity when person detected (strict)
-    if (act) {
-      this._st($(`od-embed-${cam.name}`), act.embed_change !== null ? act.embed_change.toFixed(4) : '—');
-      this._st($(`od-motion-${cam.name}`), act.motion_level !== null ? act.motion_level.toFixed(4) : '—');
-      const te = $(`od-trend-${cam.name}`);
-      if (te && act.trend !== null) { const a = act.trend > 0.001 ? '↑' : act.trend < -0.001 ? '↓' : '→'; this._st(te, act.trend.toFixed(4)+a); }
-      this._st($(`od-ts-${cam.name}`), this._fmtTime(act.timestamp));
-    }
+    // v10: Bottom data strip — FPS/Det always, V-JEPA metrics when vjepa enabled
     if (fSt) {
       this._st($(`od-fps-${cam.name}`), (fSt.camera_fps || 0).toFixed(0));
       this._st($(`od-dps-${cam.name}`), (fSt.detection_fps || 0).toFixed(1));
     }
-    // v9: opacity strictly tied to person_detected
+    if (cam.vjepa && act) {
+      this._st($(`od-embed-${cam.name}`), act.embed_change !== null ? act.embed_change.toFixed(3) : '—');
+      this._st($(`od-motion-${cam.name}`), act.motion_level !== null ? act.motion_level.toFixed(3) : '—');
+      const te = $(`od-trend-${cam.name}`);
+      if (te && act.trend !== null) {
+        const a = act.trend > 0.001 ? '↑' : act.trend < -0.001 ? '↓' : '→';
+        this._st(te, act.trend.toFixed(3) + a);
+      }
+      this._st($(`od-ts-${cam.name}`), this._fmtTime(act.timestamp));
+    }
+    // v10: show strip at moderate opacity always, full when person detected
     const db = $(`data-${cam.name}`);
-    if (db) db.style.opacity = personDetected ? '1' : '0.3';
+    if (db) db.style.opacity = personDetected ? '1' : '0.5';
 
     // Detection pills
     const objs = this._getDetectedObjects(cam.name);
@@ -443,7 +465,7 @@ class EngineeredLightingCard extends HTMLElement {
     if (st?.cpu_usages?.['frigate.full_system']) {
       const fs = st.cpu_usages['frigate.full_system'];
       const cpu = parseFloat(fs.cpu)||0, mem = parseFloat(fs.mem)||0;
-      sv('mc-fri-cpu', cpu.toFixed(1)+'%'); bar('mc-fri-cpu-bar', cpu);
+      sv('mc-fri-cpu-v', cpu.toFixed(1)+'%');
       sv('mc-fri-mem', mem.toFixed(1)+'%'); bar('mc-fri-mem-bar', mem);
     }
     if (st?.service?.uptime) {
@@ -452,7 +474,7 @@ class EngineeredLightingCard extends HTMLElement {
     }
     let dc=0, mc=0;
     this._config.cameras.forEach(c => { if (this._getSwitch(c.name,'detect')) dc++; if (this._getSwitch(c.name,'motion')) mc++; });
-    sv('mc-fri-det', `${dc}/5`); sv('mc-fri-mot', `${mc}/5`);
+    sv('mc-fri-det', `${dc}/5`);
     const fb = $('mc-fri-b');
     if (fb) { fb.textContent = hasFri ? 'Online' : '—'; fb.className = hasFri ? 'mc-badge badge-on' : 'mc-badge'; }
 
@@ -460,7 +482,7 @@ class EngineeredLightingCard extends HTMLElement {
     if (st?.detectors) {
       const det = Object.values(st.detectors)[0];
       if (det) {
-        sv('mc-coral-spd', (det.inference_speed||0).toFixed(1)+' ms');
+        sv('mc-coral-spd-v', (det.inference_speed||0).toFixed(1)+' ms');
         sv('mc-coral-pid', String(det.pid||'—'));
         const cb = $('mc-coral-b'); if (cb) { cb.textContent = 'Online'; cb.className = 'mc-badge badge-on'; }
       }
@@ -473,21 +495,27 @@ class EngineeredLightingCard extends HTMLElement {
 
     // Jetson
     let jOn = false;
-    [['sensor.jetson_cpu_usage','mc-jet-cpu','mc-jet-cpu-bar'],['sensor.jetson_gpu_usage','mc-jet-gpu','mc-jet-gpu-bar']].forEach(([sid,vid,bid]) => {
-      const s = h.states[sid];
-      if (s && s.state !== 'unavailable' && s.state !== 'unknown') { jOn=true; const v=parseFloat(s.state)||0; sv(vid, v.toFixed(1)+'%'); bar(bid, v); }
-    });
+    const jcpu = h.states['sensor.jetson_cpu_usage'];
+    if (jcpu && jcpu.state !== 'unavailable' && jcpu.state !== 'unknown') {
+      jOn=true; const v=parseFloat(jcpu.state)||0;
+      sv('mc-jet-cpu-v', v.toFixed(1)+'%');
+    }
+    const jgpu = h.states['sensor.jetson_gpu_usage'];
+    if (jgpu && jgpu.state !== 'unavailable' && jgpu.state !== 'unknown') {
+      jOn=true; const v=parseFloat(jgpu.state)||0;
+      sv('mc-jet-gpu', v.toFixed(1)+'%'); bar('mc-jet-gpu-bar', v);
+    }
     const jr = h.states['sensor.jetson_ram_usage'];
     if (jr && jr.state !== 'unavailable' && jr.state !== 'unknown') {
       jOn=true; const a=jr.attributes||{};
       sv('mc-jet-ram', `${a.ram_used_mb?(a.ram_used_mb/1024).toFixed(1):'?'}/${a.ram_total_mb?(a.ram_total_mb/1024).toFixed(1):'?'} GB`);
       bar('mc-jet-ram-bar', parseFloat(jr.state)||0);
     }
-    [['sensor.jetson_cpu_temp','mc-jet-ct'],['sensor.jetson_gpu_temp','mc-jet-gt']].forEach(([sid,eid]) => {
-      const s = h.states[sid];
-      if (s && s.state !== 'unavailable' && s.state !== 'unknown') { jOn=true; sv(eid, s.state+'°C'); }
-      else sv(eid, '—');
-    });
+    const jct = h.states['sensor.jetson_cpu_temp'];
+    if (jct && jct.state !== 'unavailable' && jct.state !== 'unknown') {
+      jOn=true; sv('mc-jet-ct', jct.state+'°C');
+    } else sv('mc-jet-ct', '—');
+
     const jb = $('mc-jet-b');
     if (jb) {
       const vjOnline = h.states['sensor.v_jepa_2_status']?.state === 'running';
@@ -497,24 +525,31 @@ class EngineeredLightingCard extends HTMLElement {
     }
 
     // V-JEPA 2
-    const vMap = { 'sensor.v_jepa_2_status':'mc-vj-st','sensor.v_jepa_2_fps':'mc-vj-fps','sensor.v_jepa_2_inference_latency':'mc-vj-lat','sensor.v_jepa_2_frames_processed':'mc-vj-frm','sensor.v_jepa_2_active_cameras':'mc-vj-cam' };
-    let vjOn = false;
-    for (const [sid, eid] of Object.entries(vMap)) {
-      const s = h.states[sid];
-      if (s && s.state !== 'unavailable' && s.state !== 'unknown') {
-        vjOn=true; let v = s.state;
-        if (sid.includes('fps')) v = parseFloat(v).toFixed(1)+' fps';
-        else if (sid.includes('latency')) v = parseFloat(v).toFixed(0)+' ms';
-        else if (sid.includes('frames')) v = parseInt(v).toLocaleString();
-        else if (sid.includes('active')) v += '/5';
-        sv(eid, v);
-      }
+    const vFps = h.states['sensor.v_jepa_2_fps'];
+    if (vFps && vFps.state !== 'unavailable' && vFps.state !== 'unknown') {
+      sv('mc-vj-fps-v', parseFloat(vFps.state).toFixed(1)+' fps');
     }
-    // v9: strictly person_detected count
+    const vLat = h.states['sensor.v_jepa_2_inference_latency'];
+    if (vLat && vLat.state !== 'unavailable' && vLat.state !== 'unknown') {
+      sv('mc-vj-lat', parseFloat(vLat.state).toFixed(0)+' ms');
+    }
+    const vFrm = h.states['sensor.v_jepa_2_frames_processed'];
+    if (vFrm && vFrm.state !== 'unavailable' && vFrm.state !== 'unknown') {
+      sv('mc-vj-frm', parseInt(vFrm.state).toLocaleString());
+    }
+    const vCam = h.states['sensor.v_jepa_2_active_cameras'];
+    if (vCam && vCam.state !== 'unavailable' && vCam.state !== 'unknown') {
+      sv('mc-vj-cam', vCam.state+'/5');
+    }
+
+    let vjOn = !!(vFps || vLat || vFrm || vCam);
     let ic=0; this._config.cameras.forEach(c => { if (c.vjepa && this._isVjepaInferring(c.name)) ic++; });
     sv('mc-vj-inf', `${ic}/3`);
     const vjb = $('mc-vj-b');
-    if (vjb) { vjb.textContent = vjOn ? 'Online' : 'Offline'; vjb.className = vjOn ? 'mc-badge badge-on' : 'mc-badge'; }
+    if (vjb) {
+      const running = h.states['sensor.v_jepa_2_status']?.state === 'running';
+      vjb.textContent = running ? 'Online' : 'Offline'; vjb.className = running ? 'mc-badge badge-on' : 'mc-badge';
+    }
     const vStatus = h.states['sensor.v_jepa_2_status'];
     if (vStatus?.attributes) sv('mc-vj-mdl', `${vStatus.attributes.model||'ViT-L'} · ${vStatus.attributes.precision||'FP16'} · CUDA`);
   }
@@ -524,16 +559,17 @@ class EngineeredLightingCard extends HTMLElement {
     return `
     :host {
       --bg: #000;
-      --g1: rgba(255,255,255,0.035);
-      --g2: rgba(255,255,255,0.07);
-      --g3: rgba(255,255,255,0.11);
+      --g1: rgba(255,255,255,0.03);
+      --g2: rgba(255,255,255,0.06);
+      --g3: rgba(255,255,255,0.10);
+      --g4: rgba(255,255,255,0.14);
       --t1: rgba(255,255,255,0.92);
-      --t2: rgba(255,255,255,0.60);
+      --t2: rgba(255,255,255,0.62);
       --t3: rgba(255,255,255,0.38);
       --t4: rgba(255,255,255,0.20);
-      --r: 12px; --rs: 8px;
+      --r: 14px; --rs: 10px;
       --ease: cubic-bezier(.25,.1,.25,1);
-      --blur: blur(24px); --blurs: blur(16px);
+      --blur: blur(40px); --blurs: blur(20px);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -544,7 +580,7 @@ class EngineeredLightingCard extends HTMLElement {
       height: 100vh; display: flex; flex-direction: column; overflow: hidden;
     }
 
-    /* Header */
+    /* ── Header ── */
     .hdr {
       display: flex; justify-content: space-between; align-items: center;
       padding: 10px 20px; background: var(--g1);
@@ -567,17 +603,17 @@ class EngineeredLightingCard extends HTMLElement {
     .pill-dot.off { background: var(--t4); animation: none; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-    /* Scroll */
+    /* ── Scroll ── */
     .scroll-area {
       flex: 1; overflow-y: auto; overflow-x: hidden;
-      padding: 10px 12px 220px;
+      padding: 10px 12px 240px;
       -webkit-overflow-scrolling: touch;
     }
     .scroll-area::-webkit-scrollbar { width: 2px; }
     .scroll-area::-webkit-scrollbar-track { background: transparent; }
     .scroll-area::-webkit-scrollbar-thumb { background: var(--g2); border-radius: 2px; }
 
-    /* Grids */
+    /* ── Camera Grids ── */
     .grid-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
     .grid-secondary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 
@@ -587,12 +623,12 @@ class EngineeredLightingCard extends HTMLElement {
     }
     .cam-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-    /* ── Overlays: improved legibility v9 ── */
+    /* ── Top overlay: label + pipeline + status ── */
     .ov-top {
       position: absolute; top: 0; left: 0; right: 0;
       display: flex; align-items: center; gap: 6px;
       padding: 8px 10px; z-index: 5;
-      background: linear-gradient(180deg, rgba(0,0,0,0.60) 0%, rgba(0,0,0,0.20) 70%, transparent 100%);
+      background: linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.15) 70%, transparent 100%);
     }
     .ov-label {
       font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
@@ -600,7 +636,7 @@ class EngineeredLightingCard extends HTMLElement {
       text-shadow: 0 1px 6px rgba(0,0,0,1), 0 0px 2px rgba(0,0,0,0.8);
     }
     .ov-pipe {
-      display: flex; align-items: center; gap: 3px;
+      display: flex; align-items: center; gap: 4px;
       font-size: 8px; font-weight: 600; color: var(--t4);
       text-transform: uppercase; letter-spacing: 0.5px;
       opacity: 0; transition: opacity 0.5s var(--ease);
@@ -610,121 +646,154 @@ class EngineeredLightingCard extends HTMLElement {
     .pipe-dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,0.65); animation: pulse 1.2s ease-in-out infinite; }
     .ov-status {
       margin-left: auto; font-size: 9px; font-weight: 600;
-      padding: 2px 8px; border-radius: 100px;
+      padding: 3px 10px; border-radius: 100px;
       background: rgba(0,0,0,0.35); color: var(--t3);
       backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
       border: 1px solid rgba(255,255,255,0.06);
       text-shadow: 0 1px 3px rgba(0,0,0,0.8);
     }
-    .ov-s-person { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.85); border-color: rgba(255,255,255,0.15); }
-    .ov-s-motion { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.55); }
+    .ov-s-person { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.88); border-color: rgba(255,255,255,0.18); }
+    .ov-s-motion { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.50); }
 
-    /* Detection pills — v9: higher contrast */
+    /* ── Detection pills v10: refined ── */
     .ov-detect {
-      position: absolute; top: 32px; left: 0; right: 0; z-index: 4; pointer-events: none;
+      position: absolute; top: 34px; left: 0; right: 0; z-index: 4; pointer-events: none;
       display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 10px;
     }
     .dp {
-      padding: 2px 8px; border-radius: 100px; font-size: 10px; font-weight: 600;
-      background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.18); color: rgba(255,255,255,0.88);
+      padding: 3px 9px; border-radius: 100px; font-size: 10px; font-weight: 600;
+      background: rgba(0,0,0,0.50); border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.85);
       backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
       text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+      letter-spacing: 0.01em;
     }
-    .dp-snd { font-style: italic; color: rgba(255,255,255,0.60); font-weight: 500; }
+    .dp-snd { font-style: italic; color: rgba(255,255,255,0.55); font-weight: 500; border-color: rgba(255,255,255,0.08); }
 
-    /* V-JEPA Activity overlay — v9: stronger scrim, clearer hierarchy */
+    /* ── V-JEPA Activity overlay v10: refined hierarchy ── */
     .ov-activity {
-      position: absolute; bottom: 24px; left: 0; right: 0; z-index: 5;
-      opacity: 0.15; transition: opacity 0.5s var(--ease);
+      position: absolute; bottom: 28px; left: 0; right: 0; z-index: 5;
+      opacity: 0.12; transition: opacity 0.5s var(--ease);
     }
     .ov-activity.act-on { opacity: 1; }
     .act-scrim {
-      position: absolute; inset: -12px -4px -6px -4px;
-      background: linear-gradient(0deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.35) 55%, transparent 100%);
+      position: absolute; inset: -14px -4px -8px -4px;
+      background: linear-gradient(0deg, rgba(0,0,0,0.60) 0%, rgba(0,0,0,0.30) 55%, transparent 100%);
       border-radius: 8px;
       pointer-events: none;
     }
-    .act-content { position: relative; z-index: 1; padding: 8px 12px; }
+    .act-content { position: relative; z-index: 1; padding: 8px 14px; }
     .act-main { display: flex; align-items: baseline; gap: 8px; }
     .act-name {
-      font-size: 18px; font-weight: 500; color: var(--t4);
-      letter-spacing: -0.02em;
+      font-size: 20px; font-weight: 500; color: var(--t4);
+      letter-spacing: -0.025em;
       text-shadow: 0 1px 10px rgba(0,0,0,1), 0 0px 3px rgba(0,0,0,0.9);
       transition: color 0.4s var(--ease);
     }
     .act-name-on { color: rgba(255,255,255,0.95); }
     .act-conf {
-      font-size: 14px; font-weight: 400; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums;
+      font-size: 14px; font-weight: 400; color: rgba(255,255,255,0.50); font-variant-numeric: tabular-nums;
       text-shadow: 0 1px 6px rgba(0,0,0,0.9);
     }
     .act-sec {
-      font-size: 11px; color: rgba(255,255,255,0.45); font-weight: 400; min-height: 14px;
+      font-size: 11px; color: rgba(255,255,255,0.40); font-weight: 400; min-height: 14px;
       text-shadow: 0 1px 4px rgba(0,0,0,0.8);
       margin-top: 2px;
     }
-    .act-scores { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 0; }
-    .sr { display: flex; align-items: center; gap: 5px; }
-    .sr-n { font-size: 9px; font-weight: 400; color: rgba(255,255,255,0.45); width: 44px; flex-shrink: 0; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+    .act-scores { display: flex; flex-direction: column; gap: 3px; padding: 5px 0 0; }
+    .sr { display: flex; align-items: center; gap: 6px; }
+    .sr-n { font-size: 10px; font-weight: 400; color: rgba(255,255,255,0.45); width: 48px; flex-shrink: 0; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
     .sr-bar { flex: 1; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.08); overflow: hidden; }
     .sr-fill { height: 100%; border-radius: 1px; background: rgba(255,255,255,0.40); transition: width 0.4s var(--ease); }
-    .sr-v { font-size: 9px; font-weight: 500; color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; width: 24px; text-align: right; flex-shrink: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+    .sr-v { font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; width: 28px; text-align: right; flex-shrink: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
 
-    /* Bottom data strip — v9: improved contrast */
+    /* ── Bottom data strip v10: larger, cleaner, legible ── */
     .ov-data {
       position: absolute; bottom: 0; left: 0; right: 0; z-index: 5;
-      display: flex; align-items: center; gap: 8px; padding: 5px 12px;
-      background: rgba(0,0,0,0.55);
+      display: flex; align-items: center; gap: 10px; padding: 6px 14px;
+      background: rgba(0,0,0,0.50);
       backdrop-filter: var(--blurs); -webkit-backdrop-filter: var(--blurs);
       transition: opacity 0.5s var(--ease);
     }
-    .od { display: flex; align-items: center; gap: 3px; }
-    .od-l { font-size: 8px; font-weight: 500; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.3px; }
-    .od-v { font-size: 9px; font-weight: 500; font-family: 'SF Mono','Menlo',monospace; color: rgba(255,255,255,0.50); font-variant-numeric: tabular-nums; }
-    .od-sep { width: 1px; height: 8px; background: rgba(255,255,255,0.08); margin: 0 2px; }
-    .od-ts { font-size: 8px; color: rgba(255,255,255,0.30); margin-left: auto; font-variant-numeric: tabular-nums; }
+    .od { display: flex; align-items: center; gap: 4px; }
+    .od-l { font-size: 9px; font-weight: 500; color: rgba(255,255,255,0.40); text-transform: uppercase; letter-spacing: 0.3px; }
+    .od-v { font-size: 11px; font-weight: 500; font-family: 'SF Mono','Menlo',monospace; color: rgba(255,255,255,0.65); font-variant-numeric: tabular-nums; }
+    .od-sep { width: 1px; height: 10px; background: rgba(255,255,255,0.10); margin: 0 2px; }
+    .od-ts { font-size: 9px; color: rgba(255,255,255,0.35); margin-left: auto; font-variant-numeric: tabular-nums; }
 
-    /* Fixed metrics pane — v9: refined layout */
+    /* ── Fixed metrics pane v10: liquid glass ── */
     .metrics-pane {
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
-      padding: 10px 12px 12px;
+      padding: 12px 14px 14px;
     }
     .metrics-grid {
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
       max-width: 1800px; margin: 0 auto;
     }
+
+    /* v10: Liquid glass card treatment */
     .mc {
-      background: rgba(8,8,10,0.92); border: 1px solid var(--g2); border-radius: var(--r);
-      padding: 14px 16px;
-      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      background: rgba(18,18,22,0.65);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: var(--r);
+      padding: 16px 20px;
+      backdrop-filter: blur(48px) saturate(1.2);
+      -webkit-backdrop-filter: blur(48px) saturate(1.2);
+      box-shadow:
+        inset 0 0.5px 0 rgba(255,255,255,0.08),
+        0 4px 24px rgba(0,0,0,0.3);
+      transition: border-color 0.3s var(--ease), box-shadow 0.3s var(--ease);
     }
-    .mc:hover { border-color: var(--g3); }
-    .mc-accent { border-color: rgba(255,255,255,0.10); }
+    .mc:hover {
+      border-color: rgba(255,255,255,0.12);
+      box-shadow:
+        inset 0 0.5px 0 rgba(255,255,255,0.10),
+        0 6px 32px rgba(0,0,0,0.4);
+    }
+    .mc-accent {
+      border-color: rgba(255,255,255,0.10);
+      background: rgba(22,22,28,0.65);
+    }
 
-    .mc-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .mc-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+    .mc-icon { font-size: 10px; color: var(--t3); }
     .mc-t { font-size: 11px; font-weight: 600; flex: 1; color: var(--t2); letter-spacing: -0.01em; }
-    .mc-badge { font-size: 8px; font-weight: 600; padding: 2px 8px; border-radius: 100px; background: var(--g1); color: var(--t4); letter-spacing: 0.02em; }
+    .mc-badge { font-size: 8px; font-weight: 600; padding: 2px 9px; border-radius: 100px; background: rgba(255,255,255,0.04); color: var(--t4); letter-spacing: 0.02em; }
     .mc-badge.badge-on { background: rgba(255,255,255,0.08); color: var(--t2); }
-    .mc-badge.badge-warn { background: rgba(255,255,255,0.05); color: var(--t3); }
+    .mc-badge.badge-warn { background: rgba(255,200,100,0.08); color: rgba(255,200,100,0.55); }
 
-    .mc-body { display: flex; flex-direction: column; gap: 6px; }
+    .mc-body { display: flex; flex-direction: column; gap: 0; }
+
+    /* v10: Large primary metric */
+    .mc-primary { margin-bottom: 12px; }
+    .mc-pv {
+      font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums;
+      letter-spacing: -0.03em; color: var(--t1); line-height: 1;
+    }
+    .mc-pl {
+      font-size: 9px; font-weight: 500; color: var(--t4);
+      text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px;
+    }
+
+    /* v10: Smaller secondary rows */
+    .mc-secondary { display: flex; flex-direction: column; gap: 7px; }
     .mc-r { display: flex; align-items: center; gap: 10px; }
-    .mc-r-mdl { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--g2); }
-    .mc-l { font-size: 10px; color: var(--t3); width: 56px; flex-shrink: 0; font-weight: 400; }
-    .mc-bar { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.05); overflow: hidden; }
-    .mc-fill { height: 100%; border-radius: 2px; transition: width 0.6s var(--ease); width: 0%; background: rgba(255,255,255,0.30); }
-    .mc-v { font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--t2); min-width: 56px; text-align: right; }
+    .mc-r-mdl { margin-top: 6px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); }
+    .mc-l { font-size: 10px; color: var(--t3); width: 54px; flex-shrink: 0; font-weight: 400; }
+    .mc-bar { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.06); overflow: hidden; }
+    .mc-fill { height: 100%; border-radius: 2px; transition: width 0.6s var(--ease); width: 0%; background: rgba(255,255,255,0.28); }
+    .mc-v { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--t2); min-width: 56px; text-align: right; }
     .mc-mdl { font-size: 9px; color: var(--t3); font-family: 'SF Mono','Menlo',monospace; letter-spacing: 0.2px; font-weight: 400; }
 
     @media (max-width: 1000px) {
       .metrics-grid { grid-template-columns: repeat(2, 1fr); }
       .grid-secondary { grid-template-columns: repeat(2, 1fr); }
-      .scroll-area { padding-bottom: 360px; }
+      .scroll-area { padding-bottom: 400px; }
     }
     @media (max-width: 600px) {
       .grid-primary { grid-template-columns: 1fr; }
       .grid-secondary { grid-template-columns: 1fr; }
       .metrics-grid { grid-template-columns: 1fr 1fr; }
-      .scroll-area { padding-bottom: 420px; }
+      .scroll-area { padding-bottom: 500px; }
     }
     `;
   }
@@ -737,5 +806,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'engineered-lighting-card',
   name: 'Engineered Lighting',
-  description: 'V-JEPA 2 World Model Dashboard v9'
+  description: 'V-JEPA 2 World Model Dashboard v10'
 });
